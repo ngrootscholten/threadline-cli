@@ -1,0 +1,68 @@
+{
+  "name": "threadlines",
+  "version": "0.1.41",
+  "description": "Threadlines CLI - AI-powered linter based on your natural language documentation",
+  "main": "dist/index.js",
+  "bin": {
+    "threadline": "./bin/threadline"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "keywords": [
+    "code-quality",
+    "linter",
+    "ai",
+    "code-review",
+    "threadline",
+    "code-standards",
+    "documentation",
+    "llm"
+  ],
+  "author": "Threadlines",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threadlines/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/threadlines/cli/issues"
+  },
+  "homepage": "https://threadlines.dev",
+  "scripts": {
+    "build": "npm run check && tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "glob": "^13.0.0",
+    "js-yaml": "^4.1.0",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.51.0",
+    "@typescript-eslint/parser": "^8.51.0",
+    "eslint": "^9.39.2",
+    "typescript": "^5.7.2"
+  }
+}
+
