@@ -95,26 +95,6 @@ Edit `threadlines/example.md` with your coding standards, then rename it to some
 ```bash
 npx threadlines check
 ```
-
-## Usage
-
-### Initialize Threadline Template
-
-```bash
-threadlines init
-```
-
-Creates a template threadline file to get you started. The command will:
-- Create the `/threadlines` directory if it doesn't exist
-- Generate `threadlines/example.md` with boilerplate content
-- Display instructions for API key configuration
-
-### Check Code Against Threadlines
-
-```bash
-threadlines check
-```
-
 By default, analyzes your staged/unstaged git changes against all threadlines in the `/threadlines` directory.
 
 **Common Use Cases:**
@@ -164,11 +144,15 @@ threadlines check --full
 
 ### Environment Variables
 
-- `THREADLINE_API_KEY` - **Required.** Your Threadline API key for authentication
-  - Can be set in `.env.local` file (recommended for local development)
-  - Or as an environment variable (required for CI/CD)
-- `THREADLINE_API_URL` - Server URL (default: http://localhost:3000)
-  - Can also be set with `--api-url` flag: `npx threadlines check --api-url http://your-server.com`
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `THREADLINE_API_KEY` | Authentication with Threadlines API | Yes |
+| `THREADLINE_ACCOUNT` | Your Threadlines account email | Yes |
+| `THREADLINE_API_URL` | Custom API endpoint (default: https://devthreadline.com) | No |
+
+Both required variables can be set in a `.env.local` file (recommended for local development) or as environment variables (required for CI/CD).
+
+The optional `THREADLINE_API_URL` allows you to point to a custom server if you want to intercept telemetry with your own endpoint. It can also be set with the `--api-url` flag.
 
 ## Threadline Files
 

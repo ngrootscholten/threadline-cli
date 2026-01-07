@@ -7,7 +7,8 @@ The Threadlines CLI reads the following environment variables:
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `THREADLINE_API_KEY` | Authentication with Threadlines API | Yes |
-| `THREADLINE_API_URL` | Custom API endpoint (default: https://threadlines.dev) | No |
+| `THREADLINE_ACCOUNT` | Your Threadlines account email | Yes |
+| `THREADLINE_API_URL` | Custom API endpoint (default: https://devthreadline.com) | No |
 
 ### What We Do NOT Read
 

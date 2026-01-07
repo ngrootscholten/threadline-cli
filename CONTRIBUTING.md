@@ -77,13 +77,7 @@ When reporting bugs, please include:
 - Expected vs actual behavior
 - Relevant error messages
 
-## Security
-
-If you discover a security vulnerability, please email security@threadlines.dev
-instead of opening a public issue. See [SECURITY.md](SECURITY.md) for details.
-
 ## Questions?
 
-Open a [discussion](https://github.com/threadlines/cli/discussions) or
-reach out at hello@threadlines.dev.
+Open a [discussion](https://github.com/threadlines/cli/discussions).
 
