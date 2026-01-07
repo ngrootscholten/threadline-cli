@@ -27,12 +27,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/threadlines/cli.git"
+    "url": "git+https://github.com/ngrootscholten/threadline-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/threadlines/cli/issues"
+    "url": "https://github.com/ngrootscholten/threadline-cli/issues"
   },
-  "homepage": "https://threadlines.dev",
+  "homepage": "https://devthreadline.com/",
   "scripts": {
     "build": "npm run check && tsc",
     "dev": "tsc --watch",

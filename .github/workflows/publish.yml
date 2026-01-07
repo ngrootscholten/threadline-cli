@@ -10,7 +10,7 @@ jobs:
     
     permissions:
       contents: read
-      id-token: write  # Required for npm provenance
+      id-token: write  # Required for OIDC trusted publishing + provenance
 
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +34,7 @@ jobs:
       - name: Build
         run: npm run build
 
+      # OIDC Trusted Publishing - no NPM_TOKEN needed!
+      # npm trusts GitHub Actions directly via OIDC
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
