@@ -1,4 +1,4 @@
-# threadlines
+# Threadline
 
 Threadline CLI - AI-powered linter based on your natural language documentation.
 
@@ -14,13 +14,13 @@ Getting teams to follow consistent quality standards is **hard**. Really hard.
 
 ### What Makes Threadline Different?
 
-- **🎯 Focused Reviews** - Instead of one AI trying to check everything, Threadline runs multiple specialized AI reviewers in parallel. Each threadline focuses on one thing and does it well.
+- **Focused Reviews** - Instead of one AI trying to check everything, Threadline runs multiple specialized AI reviewers in parallel. Each threadline focuses on one thing and does it well.
 
-- **📝 Documentation That Lives With Your Code** - Your coding standards live in your repo, in a `/threadlines` folder. They're version-controlled, reviewable, and always in sync with your codebase.
+- **Documentation That Lives With Your Code** - Your coding standards live in your repo, in a `/threadlines` folder. They're version-controlled, reviewable, and always in sync with your codebase.
 
-- **🔍 Fully Auditable** - Every AI review decision is logged and traceable. You can see exactly what was checked, why it passed or failed, and have confidence in the results.
+- **Fully Auditable** - Every AI review decision is logged and traceable. You can see exactly what was checked, why it passed or failed, and have confidence in the results.
 
-- **⚡ Fast & Parallel** - Multiple threadlines run simultaneously, so you get comprehensive feedback in seconds, not minutes.
+- **Fast & Parallel** - Multiple threadlines run simultaneously, so you get comprehensive feedback in seconds, not minutes.
 
 ## Installation
 
@@ -47,19 +47,6 @@ npx --yes threadlines check
 ```
 
 The `--yes` flag auto-confirms package installation, preventing prompts that block automation.
-
-### Option 3: Local Project Dependency (Recommended for Teams)
-
-```bash
-npm install --save-dev threadlines
-```
-
-Then use:
-```bash
-npx threadlines check
-```
-
-This ensures everyone on your team uses the same version.
 
 ## Quick Start
 

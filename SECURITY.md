@@ -19,32 +19,17 @@ This CLI does **not** access, read, or transmit any other environment variables.
 - Access database connection strings
 - Read any secrets beyond what's documented above
 
-You can verify this by:
-1. Searching the source code for `process.env` usage
-2. Auditing the `src/utils/environment.ts` file which contains all env var access
-
 ## Data Transmission
 
 The CLI sends the following data to the Threadlines API:
 
 1. **Git diff content** - The code changes being analyzed
 2. **Threadline definitions** - Your markdown files from `/threadlines`
-3. **Metadata** - Repository name, branch, commit SHA
+3. **Metadata** - Repository name, branch, commit SHA, context files specified in your threadline definitions
 
 We do **not** send:
 - Your entire codebase
 - Environment variables or secrets
-- File contents outside of the diff
-
-## Reporting a Vulnerability
-
-If you discover a security vulnerability, please report it by emailing:
-
-**security@threadlines.dev**
-
-Please do **not** open a public GitHub issue for security vulnerabilities.
-
-We will respond within 48 hours and work with you to understand and address the issue.
 
 ## Auditing This Package
 
