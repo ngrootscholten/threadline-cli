@@ -3,7 +3,6 @@ import { getFileContent, getFolderContent, getMultipleFilesContent } from '../gi
 import { ReviewAPIClient, ExpertResult, ReviewResponse } from '../api/client';
 import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment } from '../utils/environment';
-import { ReviewContext } from '../utils/context';
 import { getGitHubContext } from '../git/github';
 import { getGitLabContext } from '../git/gitlab';
 import { getVercelContext } from '../git/vercel';
@@ -99,7 +98,6 @@ export async function checkCommand(options: {
 
     // 2. Detect environment and context
     const environment = detectEnvironment();
-    let context: ReviewContext;
     let gitDiff: { diff: string; changedFiles: string[] };
     let repoName: string | undefined;
     let branchName: string | undefined;
@@ -123,21 +121,14 @@ export async function checkCommand(options: {
     if (options.file) {
       console.log(chalk.gray(`📝 Reading file: ${options.file}...`));
       gitDiff = await getFileContent(repoRoot, options.file);
-      context = { type: 'local' }; // File context doesn't need git context
-      // For file/folder/files, repo/branch are not available - skip them
     } else if (options.folder) {
       console.log(chalk.gray(`📝 Reading folder: ${options.folder}...`));
       gitDiff = await getFolderContent(repoRoot, options.folder);
-      context = { type: 'local' };
-      // For file/folder/files, repo/branch are not available - skip them
     } else if (options.files && options.files.length > 0) {
       console.log(chalk.gray(`📝 Reading ${options.files.length} file(s)...`));
       gitDiff = await getMultipleFilesContent(repoRoot, options.files);
-      context = { type: 'local' };
-      // For file/folder/files, repo/branch are not available - skip them
     } else if (options.branch) {
       console.log(chalk.gray(`📝 Collecting git changes for branch: ${options.branch}...`));
-      context = { type: 'branch', branchName: options.branch };
       gitDiff = await getBranchDiff(repoRoot, options.branch);
       // Get repo/branch using environment-specific approach
       if (environment === 'github') {
@@ -185,7 +176,6 @@ export async function checkCommand(options: {
       }
     } else if (options.commit) {
       console.log(chalk.gray(`📝 Collecting git changes for commit: ${options.commit}...`));
-      context = { type: 'commit', commitSha: options.commit };
       gitDiff = await getCommitDiff(repoRoot, options.commit);
       // Get repo/branch using environment-specific approach
       if (environment === 'github') {
@@ -256,7 +246,6 @@ export async function checkCommand(options: {
       gitDiff = envContext.diff;
       repoName = envContext.repoName;
       branchName = envContext.branchName;
-      context = envContext.context;
       
       // Use metadata from environment context
       metadata = {
