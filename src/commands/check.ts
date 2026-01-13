@@ -328,9 +328,9 @@ export async function checkCommand(options: {
     // 7. Display results (with filtering if --full not specified)
     displayResults(response, options.full || false);
 
-    // Exit with appropriate code
-    const hasAttention = response.results.some(r => r.status === 'attention');
-    process.exit(hasAttention ? 1 : 0);
+    // Exit with appropriate code (attention or errors = failure)
+    const hasIssues = response.results.some(r => r.status === 'attention' || r.status === 'error');
+    process.exit(hasIssues ? 1 : 0);
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -355,7 +355,10 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
   const notRelevant = results.filter((r: ExpertResult) => r.status === 'not_relevant').length;
   const compliant = results.filter((r: ExpertResult) => r.status === 'compliant').length;
   const attention = results.filter((r: ExpertResult) => r.status === 'attention').length;
+  const errors = results.filter((r: ExpertResult) => r.status === 'error').length;
   const attentionItems = filteredResults.filter((r: ExpertResult) => r.status === 'attention');
+  // Always show errors regardless of --full flag
+  const errorItems = results.filter((r: ExpertResult) => r.status === 'error');
 
   // Build summary parts
   const summaryParts: string[] = [];
@@ -371,17 +374,12 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
   if (metadata.timedOut > 0) {
     summaryParts.push(`${metadata.timedOut} timed out`);
   }
-  if (metadata.errors > 0) {
-    summaryParts.push(`${metadata.errors} errors`);
-  }
-
-  // Display informational message if present (e.g., zero diffs)
-  if (message) {
-    console.log('\n' + chalk.blue('ℹ️  ' + message));
+  if (errors > 0) {
+    summaryParts.push(`${errors} errors`);
   }
 
   // Show success message with breakdown if no issues
-  if (attention === 0 && metadata.timedOut === 0 && metadata.errors === 0) {
+  if (attention === 0 && metadata.timedOut === 0 && errors === 0) {
     const summary = summaryParts.length > 0 ? ` (${summaryParts.join(', ')})` : '';
     console.log('\n' + chalk.green(`✓ Threadline check passed${summary}`));
     console.log(chalk.gray(`  ${metadata.totalThreadlines} threadline${metadata.totalThreadlines !== 1 ? 's' : ''} checked\n`));
@@ -411,8 +409,8 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
     if (metadata.timedOut > 0) {
       console.log(chalk.yellow(`  ${metadata.timedOut} timed out`));
     }
-    if (metadata.errors > 0) {
-      console.log(chalk.red(`  ${metadata.errors} errors`));
+    if (errors > 0) {
+      console.log(chalk.red(`  ${errors} errors`));
     }
 
     console.log('');
@@ -437,6 +435,34 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
         console.log(chalk.gray('Needs attention'));
       }
       console.log(''); // Empty line between threadlines
+    }
+  }
+
+  // Show error items (always shown, regardless of --full flag)
+  if (errorItems.length > 0) {
+    for (const item of errorItems) {
+      console.log(chalk.red(`[error] ${item.expertId}`));
+      
+      // Show error message
+      if (item.error) {
+        console.log(chalk.red(`  Error: ${item.error.message}`));
+        if (item.error.type) {
+          console.log(chalk.red(`  Type: ${item.error.type}`));
+        }
+        if (item.error.code) {
+          console.log(chalk.red(`  Code: ${item.error.code}`));
+        }
+        // Show raw response for debugging
+        if (item.error.rawResponse) {
+          console.log(chalk.gray('  Raw response:'));
+          console.log(chalk.gray(JSON.stringify(item.error.rawResponse, null, 2).split('\n').map(line => '    ' + line).join('\n')));
+        }
+      } else if (item.reasoning) {
+        // Fallback to reasoning if no error object
+        console.log(chalk.red(`  ${item.reasoning}`));
+      }
+      
+      console.log(''); // Empty line between errors
     }
   }
 }

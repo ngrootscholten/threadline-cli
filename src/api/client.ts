@@ -27,10 +27,16 @@ export interface ReviewRequest {
 
 export interface ExpertResult {
   expertId: string;
-  status: 'compliant' | 'attention' | 'not_relevant';
+  status: 'compliant' | 'attention' | 'not_relevant' | 'error';
   reasoning?: string;
   lineReferences?: number[];
   fileReferences?: string[];
+  error?: {
+    message: string;
+    type?: string;
+    code?: string;
+    rawResponse?: any;
+  };
 }
 
 export interface ReviewResponse {
