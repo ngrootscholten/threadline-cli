@@ -1,5 +1,5 @@
 import simpleGit, { SimpleGit } from 'simple-git';
-import { GitDiffResult } from '../utils/git-diff-executor';
+import { GitDiffResult } from '../types/git';
 
 /**
  * Get diff for local development environment

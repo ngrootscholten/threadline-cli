@@ -19,7 +19,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { execSync } from 'child_process';
-import { GitDiffResult } from '../utils/git-diff-executor';
+import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
 

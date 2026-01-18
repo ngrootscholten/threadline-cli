@@ -35,7 +35,7 @@ export interface ExpertResult {
     message: string;
     type?: string;
     code?: string;
-    rawResponse?: any;
+    rawResponse?: unknown;
   };
 }
 

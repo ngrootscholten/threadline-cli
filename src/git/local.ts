@@ -12,7 +12,7 @@
  */
 
 import simpleGit, { SimpleGit } from 'simple-git';
-import { GitDiffResult } from '../utils/git-diff-executor';
+import { GitDiffResult } from '../types/git';
 import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
 

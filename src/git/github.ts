@@ -14,7 +14,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as fs from 'fs';
-import { GitDiffResult } from '../utils/git-diff-executor';
+import { GitDiffResult } from '../types/git';
 import { getDefaultBranchName } from './repo';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
