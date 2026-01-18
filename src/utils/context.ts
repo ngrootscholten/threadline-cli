@@ -58,6 +58,8 @@ export function detectContext(environment: Environment): ReviewContext {
       return detectGitHubContext();
     case 'gitlab':
       return detectGitLabContext();
+    case 'bitbucket':
+      return detectBitbucketContext();
     case 'vercel':
       return detectVercelContext();
     case 'local':
@@ -185,6 +187,51 @@ function detectVercelContext(): ReviewContext {
     return {
       type: 'commit',
       commitSha: process.env.VERCEL_GIT_COMMIT_SHA
+    };
+  }
+  
+  // Fallback to local
+  return { type: 'local' };
+}
+
+/**
+ * Bitbucket Pipelines context detection
+ * 
+ * Environment Variables (all tested 2026-01-18):
+ * - Branch: BITBUCKET_BRANCH
+ * - Commit: BITBUCKET_COMMIT
+ * - PR: BITBUCKET_PR_ID, BITBUCKET_PR_DESTINATION_BRANCH
+ * 
+ * Note: Bitbucket does not provide PR title as an environment variable.
+ */
+function detectBitbucketContext(): ReviewContext {
+  // PR context
+  const prId = process.env.BITBUCKET_PR_ID;
+  const prDestinationBranch = process.env.BITBUCKET_PR_DESTINATION_BRANCH;
+  const sourceBranch = process.env.BITBUCKET_BRANCH;
+  
+  if (prId && prDestinationBranch && sourceBranch) {
+    return {
+      type: 'pr',
+      prNumber: prId,
+      sourceBranch,
+      targetBranch: prDestinationBranch
+    };
+  }
+  
+  // Branch context
+  if (process.env.BITBUCKET_BRANCH) {
+    return {
+      type: 'branch',
+      branchName: process.env.BITBUCKET_BRANCH
+    };
+  }
+  
+  // Commit context
+  if (process.env.BITBUCKET_COMMIT) {
+    return {
+      type: 'commit',
+      commitSha: process.env.BITBUCKET_COMMIT
     };
   }
   

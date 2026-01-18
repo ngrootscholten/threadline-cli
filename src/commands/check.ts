@@ -2,9 +2,10 @@ import { findThreadlines } from '../validators/experts';
 import { getFileContent, getFolderContent, getMultipleFilesContent } from '../git/file';
 import { ReviewAPIClient, ExpertResult, ReviewResponse } from '../api/client';
 import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
-import { detectEnvironment } from '../utils/environment';
+import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
 import { getGitHubContext } from '../git/github';
 import { getGitLabContext } from '../git/gitlab';
+import { getBitbucketContext } from '../git/bitbucket';
 import { getVercelContext } from '../git/vercel';
 import { getLocalContext } from '../git/local';
 import { getBranchDiff, getCommitDiff } from '../git/diff';
@@ -12,6 +13,25 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import simpleGit from 'simple-git';
+
+/**
+ * Helper to get context for any environment.
+ * This centralizes the environment switch logic.
+ */
+async function getContextForEnvironment(environment: Environment, repoRoot: string, commitSha?: string) {
+  switch (environment) {
+    case 'github':
+      return getGitHubContext(repoRoot);
+    case 'gitlab':
+      return getGitLabContext(repoRoot);
+    case 'bitbucket':
+      return getBitbucketContext(repoRoot);
+    case 'vercel':
+      return getVercelContext(repoRoot);
+    default:
+      return getLocalContext(repoRoot, commitSha);
+  }
+}
 
 // Get CLI version from package.json
 const packageJsonPath = path.join(__dirname, '../../package.json');
@@ -76,9 +96,10 @@ export async function checkCommand(options: {
     console.log(chalk.gray('    3. Make sure .env.local is in your .gitignore'));
     console.log('');
     console.log(chalk.white('  CI/CD:'));
-    console.log(chalk.gray('    GitHub Actions: Settings → Secrets → Add variables'));
-    console.log(chalk.gray('    GitLab CI:      Settings → CI/CD → Variables'));
-    console.log(chalk.gray('    Vercel:         Settings → Environment Variables'));
+    console.log(chalk.gray('    GitHub Actions:     Settings → Secrets → Add variables'));
+    console.log(chalk.gray('    GitLab CI:          Settings → CI/CD → Variables'));
+    console.log(chalk.gray('    Bitbucket Pipelines: Repository settings → Repository variables'));
+    console.log(chalk.gray('    Vercel:             Settings → Environment Variables'));
     console.log('');
     console.log(chalk.gray('Get your credentials at: https://devthreadline.com/settings'));
     process.exit(1);
@@ -109,145 +130,41 @@ export async function checkCommand(options: {
       prTitle?: string;
     } = {};
     
-    // Validate mutually exclusive flags
+    // Check for explicit flags
     const explicitFlags = [options.branch, options.commit, options.file, options.folder, options.files].filter(Boolean);
+    
+    // Validate mutually exclusive flags
     if (explicitFlags.length > 1) {
       console.error(chalk.red('❌ Error: Only one review option can be specified at a time'));
       console.log(chalk.gray('   Options: --branch, --commit, --file, --folder, --files'));
       process.exit(1);
     }
     
-    // Check for explicit flags first (override auto-detection)
-    if (options.file) {
-      console.log(chalk.gray(`📝 Reading file: ${options.file}...`));
-      gitDiff = await getFileContent(repoRoot, options.file);
-    } else if (options.folder) {
-      console.log(chalk.gray(`📝 Reading folder: ${options.folder}...`));
-      gitDiff = await getFolderContent(repoRoot, options.folder);
-    } else if (options.files && options.files.length > 0) {
-      console.log(chalk.gray(`📝 Reading ${options.files.length} file(s)...`));
-      gitDiff = await getMultipleFilesContent(repoRoot, options.files);
-    } else if (options.branch) {
-      console.log(chalk.gray(`📝 Collecting git changes for branch: ${options.branch}...`));
-      gitDiff = await getBranchDiff(repoRoot, options.branch);
-      // Get repo/branch using environment-specific approach
-      if (environment === 'github') {
-        const gitContext = await getGitHubContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email,
-          prTitle: gitContext.prTitle
-        };
-      } else if (environment === 'gitlab') {
-        const gitContext = await getGitLabContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email,
-          prTitle: gitContext.prTitle
-        };
-      } else if (environment === 'vercel') {
-        const gitContext = await getVercelContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email
-        };
-      } else {
-        const gitContext = await getLocalContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email
-        };
+    // CI environments: auto-detect only, flags are ignored with warning
+    // Local: full flag support for developer flexibility
+    if (isCIEnvironment(environment)) {
+      // Warn if flags are passed in CI - they're meant for local development
+      if (explicitFlags.length > 0) {
+        const flagName = options.branch ? '--branch' : 
+                        options.commit ? '--commit' : 
+                        options.file ? '--file' : 
+                        options.folder ? '--folder' : '--files';
+        console.log(chalk.yellow(`⚠️  Warning: ${flagName} flag ignored in CI environment. Using auto-detection.\n`));
       }
-    } else if (options.commit) {
-      console.log(chalk.gray(`📝 Collecting git changes for commit: ${options.commit}...`));
-      gitDiff = await getCommitDiff(repoRoot, options.commit);
-      // Get repo/branch using environment-specific approach
-      if (environment === 'github') {
-        const gitContext = await getGitHubContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email,
-          prTitle: gitContext.prTitle
-        };
-      } else if (environment === 'gitlab') {
-        const gitContext = await getGitLabContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email,
-          prTitle: gitContext.prTitle
-        };
-      } else if (environment === 'vercel') {
-        const gitContext = await getVercelContext(repoRoot);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email
-        };
-      } else {
-        const gitContext = await getLocalContext(repoRoot, options.commit);
-        repoName = gitContext.repoName;
-        branchName = gitContext.branchName;
-        metadata = {
-          commitSha: gitContext.commitSha,
-          commitMessage: gitContext.commitMessage,
-          commitAuthorName: gitContext.commitAuthor.name,
-          commitAuthorEmail: gitContext.commitAuthor.email
-        };
-      }
-    } else {
-      // Auto-detect: Use environment-specific context collection (completely isolated)
+      
+      // CI auto-detect: use environment-specific context
       const envNames: Record<string, string> = {
         vercel: 'Vercel',
-        github: 'GitHub',
-        gitlab: 'GitLab',
-        local: 'Local'
+        github: 'GitHub Actions',
+        gitlab: 'GitLab CI',
+        bitbucket: 'Bitbucket Pipelines'
       };
       console.log(chalk.gray(`📝 Collecting git context for ${envNames[environment]}...`));
       
-      // Get all context from environment-specific module
-      let envContext;
-      if (environment === 'github') {
-        envContext = await getGitHubContext(repoRoot);
-      } else if (environment === 'gitlab') {
-        envContext = await getGitLabContext(repoRoot);
-      } else if (environment === 'vercel') {
-        envContext = await getVercelContext(repoRoot);
-      } else {
-        envContext = await getLocalContext(repoRoot);
-      }
-      
+      const envContext = await getContextForEnvironment(environment, repoRoot);
       gitDiff = envContext.diff;
       repoName = envContext.repoName;
       branchName = envContext.branchName;
-      
-      // Use metadata from environment context
       metadata = {
         commitSha: envContext.commitSha,
         commitMessage: envContext.commitMessage,
@@ -255,6 +172,57 @@ export async function checkCommand(options: {
         commitAuthorEmail: envContext.commitAuthor.email,
         prTitle: envContext.prTitle
       };
+    } else {
+      // Local environment: support all flags
+      if (options.file) {
+        console.log(chalk.gray(`📝 Reading file: ${options.file}...`));
+        gitDiff = await getFileContent(repoRoot, options.file);
+      } else if (options.folder) {
+        console.log(chalk.gray(`📝 Reading folder: ${options.folder}...`));
+        gitDiff = await getFolderContent(repoRoot, options.folder);
+      } else if (options.files && options.files.length > 0) {
+        console.log(chalk.gray(`📝 Reading ${options.files.length} file(s)...`));
+        gitDiff = await getMultipleFilesContent(repoRoot, options.files);
+      } else if (options.branch) {
+        console.log(chalk.gray(`📝 Collecting git changes for branch: ${options.branch}...`));
+        gitDiff = await getBranchDiff(repoRoot, options.branch);
+        // Use local context for metadata
+        const localContext = await getLocalContext(repoRoot);
+        repoName = localContext.repoName;
+        branchName = localContext.branchName;
+        metadata = {
+          commitSha: localContext.commitSha,
+          commitMessage: localContext.commitMessage,
+          commitAuthorName: localContext.commitAuthor.name,
+          commitAuthorEmail: localContext.commitAuthor.email
+        };
+      } else if (options.commit) {
+        console.log(chalk.gray(`📝 Collecting git changes for commit: ${options.commit}...`));
+        gitDiff = await getCommitDiff(repoRoot, options.commit);
+        // Use local context for metadata, passing commit SHA for author lookup
+        const localContext = await getLocalContext(repoRoot, options.commit);
+        repoName = localContext.repoName;
+        branchName = localContext.branchName;
+        metadata = {
+          commitSha: localContext.commitSha,
+          commitMessage: localContext.commitMessage,
+          commitAuthorName: localContext.commitAuthor.name,
+          commitAuthorEmail: localContext.commitAuthor.email
+        };
+      } else {
+        // Local auto-detect: staged/unstaged changes
+        console.log(chalk.gray('📝 Collecting git context for Local...'));
+        const localContext = await getLocalContext(repoRoot);
+        gitDiff = localContext.diff;
+        repoName = localContext.repoName;
+        branchName = localContext.branchName;
+        metadata = {
+          commitSha: localContext.commitSha,
+          commitMessage: localContext.commitMessage,
+          commitAuthorName: localContext.commitAuthor.name,
+          commitAuthorEmail: localContext.commitAuthor.email
+        };
+      }
     }
     
     if (gitDiff.changedFiles.length === 0) {
