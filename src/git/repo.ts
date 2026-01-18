@@ -215,7 +215,7 @@ export async function getGitLabBranchName(_repoRoot: string): Promise<string> {
  * Uses GITHUB_EVENT_PATH JSON (repository.default_branch) - the most authoritative source
  * provided directly by GitHub Actions.
  * 
- * This function is ONLY called from GitHub Actions context (getGitHubDiff),
+ * This function is ONLY called from GitHub Actions context (github.ts),
  * so GITHUB_EVENT_PATH should always be available. If it's not, we fail with a clear error.
  * 
  * Returns the branch name (e.g., "main", "master") without the "origin/" prefix.
