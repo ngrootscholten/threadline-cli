@@ -16,6 +16,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
+import { logger } from '../utils/logger';
 
 export interface GitHubContext {
   diff: GitDiffResult;
@@ -94,34 +95,34 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
  * Gets diff for GitHub Actions CI environment
  * 
  * Strategy:
- * - PR context: Compare source branch vs target branch (full PR diff)
+ * - PR context: Fetch base branch on-demand, compare base vs HEAD (full PR diff)
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
- * Note: Unlike GitLab/Bitbucket, we don't need to fetch branches on-demand here.
- * GitHub Actions' `actions/checkout` automatically fetches both base and head refs
- * for pull_request events, even with the default shallow clone (fetch-depth: 1).
- * The refs `origin/${GITHUB_BASE_REF}` and `origin/${GITHUB_HEAD_REF}` are available
- * immediately after checkout.
+ * Note: GitHub Actions does shallow clones by default (fetch-depth: 1), so we fetch
+ * the base branch on-demand. HEAD points to the merge commit which contains all PR changes.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
-  const headRef = process.env.GITHUB_HEAD_REF;
 
-  // PR Context: Compare source vs target branch
-  // No fetch needed - GitHub Actions provides both refs automatically
+  // PR Context: Fetch base branch and compare with HEAD (merge commit)
   if (eventName === 'pull_request') {
-    if (!baseRef || !headRef) {
+    if (!baseRef) {
       throw new Error(
-        'GitHub PR context detected but GITHUB_BASE_REF or GITHUB_HEAD_REF is missing. ' +
+        'GitHub PR context detected but GITHUB_BASE_REF is missing. ' +
         'This should be automatically provided by GitHub Actions.'
       );
     }
 
-    const diff = await git.diff([`origin/${baseRef}...origin/${headRef}`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${baseRef}...origin/${headRef}`]);
+    // Fetch base branch on-demand (works with shallow clones)
+    logger.debug(`Fetching base branch: origin/${baseRef}`);
+    await git.fetch(['origin', `${baseRef}:refs/remotes/origin/${baseRef}`, '--depth=1']);
+    
+    logger.debug(`PR context, using origin/${baseRef}...HEAD`);
+    const diff = await git.diff([`origin/${baseRef}...HEAD`, '-U200']);
+    const diffSummary = await git.diffSummary([`origin/${baseRef}...HEAD`]);
     const changedFiles = diffSummary.files.map(f => f.file);
 
     return {
