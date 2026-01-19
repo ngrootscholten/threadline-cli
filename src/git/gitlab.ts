@@ -16,6 +16,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
+import { logger } from '../utils/logger';
 
 export interface GitLabContext {
   diff: GitDiffResult;
@@ -100,7 +101,7 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
         'This should be automatically provided by GitLab CI.'
       );
     }
-    console.log(`  [GitLab] Fetching target branch: origin/${targetBranch}`);
+    logger.debug(`Fetching target branch: origin/${targetBranch}`);
     await git.fetch(['origin', `${targetBranch}:refs/remotes/origin/${targetBranch}`, '--depth=1']);
     const diff = await git.diff([`origin/${targetBranch}...origin/${sourceBranch}`, '-U200']);
     const diffSummary = await git.diffSummary([`origin/${targetBranch}...origin/${sourceBranch}`]);

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { Threadline, ThreadlineValidationResult } from '../types/expert';
+import { logger } from '../utils/logger';
 
 const REQUIRED_FIELDS = ['id', 'version', 'patterns'];
 
@@ -31,7 +32,7 @@ export async function findThreadlines(searchRoot: string, gitRoot: string): Prom
     if (result.valid && result.threadline) {
       threadlines.push(result.threadline);
     } else {
-      console.warn(`⚠️  Skipping ${file}: ${result.errors?.join(', ')}`);
+      logger.warn(`Skipping ${file}: ${result.errors?.join(', ')}`);
     }
   }
 

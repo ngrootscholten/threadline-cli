@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
+import { logger } from '../utils/logger';
 
 export interface FileContentResult {
   diff: string;
@@ -98,7 +99,7 @@ export async function getFolderContent(repoRoot: string, folderPath: string): Pr
     } catch (error: unknown) {
       // Skip files that can't be read (permissions, etc.)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.warn(`Warning: Could not read file '${filePath}': ${errorMessage}`);
+      logger.warn(`Could not read file '${filePath}': ${errorMessage}`);
     }
   }
 

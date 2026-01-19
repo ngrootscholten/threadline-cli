@@ -1,0 +1,7 @@
+{
+  "mode": "online",
+  "api_url": "http://localhost:3000",
+  "openai_model": "gpt-5.2",
+  "openai_service_tier": "Flex",
+  "diff_context_lines": 10
+}
