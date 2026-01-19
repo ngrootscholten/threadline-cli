@@ -13,10 +13,10 @@
  */
 
 import simpleGit, { SimpleGit } from 'simple-git';
-import * as fs from 'fs';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage } from './diff';
+import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
+import { logger } from '../utils/logger';
 
 export interface GitHubContext {
   diff: GitDiffResult;
@@ -48,9 +48,16 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   const context = detectContext();
   const commitSha = getCommitSha(context);
   
+  // Validate commit SHA is available (should always be set in GitHub Actions)
+  if (!commitSha) {
+    throw new Error(
+      'GitHub Actions: GITHUB_SHA environment variable is not set. ' +
+      'This should be automatically provided by GitHub Actions.'
+    );
+  }
   
-  // Note: commitSha parameter not needed - GitHub reads from GITHUB_EVENT_PATH JSON
-  const commitAuthor = await getCommitAuthor();
+  // Get commit author using git commands (same approach as Bitbucket/Local)
+  const commitAuthor = await getCommitAuthor(repoRoot, commitSha);
   
   // Get commit message if we have a SHA
   let commitMessage: string | undefined;
@@ -63,6 +70,14 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   
   // Get PR title if in PR context
   const prTitle = getPRTitle(context);
+
+  // Validate commit author was found
+  if (!commitAuthor) {
+    throw new Error(
+      `GitHub Actions: Failed to get commit author from git log for commit ${commitSha || 'HEAD'}. ` +
+      'This should be automatically available in the git repository.'
+    );
+  }
 
   return {
     diff,
@@ -80,34 +95,34 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
  * Gets diff for GitHub Actions CI environment
  * 
  * Strategy:
- * - PR context: Compare source branch vs target branch (full PR diff)
+ * - PR context: Fetch base branch on-demand, compare base vs HEAD (full PR diff)
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
- * Note: Unlike GitLab/Bitbucket, we don't need to fetch branches on-demand here.
- * GitHub Actions' `actions/checkout` automatically fetches both base and head refs
- * for pull_request events, even with the default shallow clone (fetch-depth: 1).
- * The refs `origin/${GITHUB_BASE_REF}` and `origin/${GITHUB_HEAD_REF}` are available
- * immediately after checkout.
+ * Note: GitHub Actions does shallow clones by default (fetch-depth: 1), so we fetch
+ * the base branch on-demand. HEAD points to the merge commit which contains all PR changes.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
-  const headRef = process.env.GITHUB_HEAD_REF;
 
-  // PR Context: Compare source vs target branch
-  // No fetch needed - GitHub Actions provides both refs automatically
+  // PR Context: Fetch base branch and compare with HEAD (merge commit)
   if (eventName === 'pull_request') {
-    if (!baseRef || !headRef) {
+    if (!baseRef) {
       throw new Error(
-        'GitHub PR context detected but GITHUB_BASE_REF or GITHUB_HEAD_REF is missing. ' +
+        'GitHub PR context detected but GITHUB_BASE_REF is missing. ' +
         'This should be automatically provided by GitHub Actions.'
       );
     }
 
-    const diff = await git.diff([`origin/${baseRef}...origin/${headRef}`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${baseRef}...origin/${headRef}`]);
+    // Fetch base branch on-demand (works with shallow clones)
+    logger.debug(`Fetching base branch: origin/${baseRef}`);
+    await git.fetch(['origin', `${baseRef}:refs/remotes/origin/${baseRef}`, '--depth=1']);
+    
+    logger.debug(`PR context, using origin/${baseRef}...HEAD`);
+    const diff = await git.diff([`origin/${baseRef}...HEAD`, '-U200']);
+    const diffSummary = await git.diffSummary([`origin/${baseRef}...HEAD`]);
     const changedFiles = diffSummary.files.map(f => f.file);
 
     return {
@@ -211,72 +226,6 @@ function getCommitSha(context: ReviewContext): string | undefined {
   return undefined;
 }
 
-/**
- * Gets commit author for GitHub Actions
- * Reads from GITHUB_EVENT_PATH JSON file (most reliable)
- * Note: commitSha parameter not used - GitHub provides author info in event JSON
- */
-async function getCommitAuthor(): Promise<{ name: string; email: string }> {
-  const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath) {
-    throw new Error(
-      'GitHub Actions: GITHUB_EVENT_PATH environment variable is not set. ' +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-  
-  if (!fs.existsSync(eventPath)) {
-    throw new Error(
-      `GitHub Actions: GITHUB_EVENT_PATH file does not exist: ${eventPath}. ` +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-  
-  try {
-    const eventData = JSON.parse(fs.readFileSync(eventPath, 'utf-8'));
-    
-    // For push events, use head_commit.author
-    if (eventData.head_commit?.author) {
-      return {
-        name: eventData.head_commit.author.name,
-        email: eventData.head_commit.author.email
-      };
-    }
-    
-    // For PR events, use commits[0].author (first commit in the PR)
-    if (eventData.commits && eventData.commits.length > 0 && eventData.commits[0].author) {
-      return {
-        name: eventData.commits[0].author.name,
-        email: eventData.commits[0].author.email
-      };
-    }
-    
-    // Fallback to pull_request.head.commit.author for PR events
-    if (eventData.pull_request?.head?.commit?.author) {
-      return {
-        name: eventData.pull_request.head.commit.author.name,
-        email: eventData.pull_request.head.commit.author.email
-      };
-    }
-    
-    // If we get here, the event JSON doesn't contain author info
-    throw new Error(
-      `GitHub Actions: GITHUB_EVENT_PATH JSON does not contain commit author information. ` +
-      `Event type: ${eventData.action || 'unknown'}. ` +
-      `This should be automatically provided by GitHub Actions.`
-    );
-  } catch (error: unknown) {
-    // If JSON parsing fails, fail loudly
-    if (error instanceof Error && error.message.includes('GitHub Actions:')) {
-      throw error; // Re-throw our own errors
-    }
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(
-      `GitHub Actions: Failed to read or parse GITHUB_EVENT_PATH JSON: ${errorMessage}. ` +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-}
 
 /**
  * Gets PR title for GitHub Actions

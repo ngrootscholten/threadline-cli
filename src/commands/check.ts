@@ -16,6 +16,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import simpleGit from 'simple-git';
 
+
 /**
  * Helper to get context for any environment.
  * This centralizes the environment switch logic.
@@ -34,6 +35,7 @@ async function getContextForEnvironment(environment: Environment, repoRoot: stri
       return getLocalContext(repoRoot, commitSha);
   }
 }
+
 
 // Get CLI version from package.json
 const packageJsonPath = path.join(__dirname, '../../package.json');
