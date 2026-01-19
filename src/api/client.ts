@@ -62,23 +62,12 @@ export class ReviewAPIClient {
       }
     });
   }
-  
+
+
 
   async review(request: ReviewRequest): Promise<ReviewResponse> {
-    try {
-      const response = await this.client.post<ReviewResponse>('/api/threadline-check', request);
-      return response.data;
-    } catch (error: unknown) {
-      if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as { response: { status: number; data?: { message?: string } }; message?: string };
-        throw new Error(`API error: ${axiosError.response.status} - ${axiosError.response.data?.message || axiosError.message || 'Unknown error'}`);
-      } else if (error && typeof error === 'object' && 'request' in error) {
-        throw new Error(`Network error: Could not reach Threadline server at ${this.client.defaults.baseURL}`);
-      } else {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        throw new Error(`Request error: ${errorMessage}`);
-      }
-    }
+    const response = await this.client.post<ReviewResponse>('/api/threadline-check', request);
+    return response.data;
   }
 }
 
