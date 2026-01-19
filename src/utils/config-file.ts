@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG: ThreadlineConfig = {
   mode: 'online',
   api_url: 'https://devthreadline.com',
   openai_model: 'gpt-5.2',
-  openai_service_tier: 'flex',
+  openai_service_tier: 'Flex',
   diff_context_lines: 10,
 };
 
@@ -88,27 +88,6 @@ export async function loadConfig(startDir: string): Promise<ThreadlineConfig> {
     } catch (error) {
       // If file exists but can't be parsed, log warning but continue with defaults
       console.warn(`Warning: Failed to parse .threadlinerc at ${configPath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  return config;
-}
-
-/**
- * Synchronous version of loadConfig for cases where async isn't available.
- * Uses a simpler search strategy (current dir only).
- */
-export function loadConfigSync(startDir: string): ThreadlineConfig {
-  const config: ThreadlineConfig = { ...DEFAULT_CONFIG };
-
-  const configPath = path.join(startDir, '.threadlinerc');
-  if (fs.existsSync(configPath)) {
-    try {
-      const configContent = fs.readFileSync(configPath, 'utf-8');
-      const fileConfig = JSON.parse(configContent);
-      Object.assign(config, fileConfig);
-    } catch (error) {
-      // Silently fail - use defaults
     }
   }
 
