@@ -106,7 +106,6 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
 
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
-  const headRef = process.env.GITHUB_HEAD_REF;
 
   // PR Context: Only pull_request events have GITHUB_BASE_REF set
   if (eventName === 'pull_request') {
