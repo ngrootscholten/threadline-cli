@@ -45,4 +45,4 @@ jobs:
         env:
           THREADLINE_API_KEY: ${{ secrets.THREADLINE_API_KEY }}
           THREADLINE_ACCOUNT: ${{ secrets.THREADLINE_ACCOUNT }}
-        run: npx threadlines check
+        run: npx threadlines check --debug

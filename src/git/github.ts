@@ -13,9 +13,8 @@
  */
 
 import simpleGit, { SimpleGit } from 'simple-git';
-import * as fs from 'fs';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage } from './diff';
+import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
 
 export interface GitHubContext {
@@ -48,9 +47,16 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   const context = detectContext();
   const commitSha = getCommitSha(context);
   
+  // Validate commit SHA is available (should always be set in GitHub Actions)
+  if (!commitSha) {
+    throw new Error(
+      'GitHub Actions: GITHUB_SHA environment variable is not set. ' +
+      'This should be automatically provided by GitHub Actions.'
+    );
+  }
   
-  // Note: commitSha parameter not needed - GitHub reads from GITHUB_EVENT_PATH JSON
-  const commitAuthor = await getCommitAuthor();
+  // Get commit author using git commands (same approach as Bitbucket/Local)
+  const commitAuthor = await getCommitAuthor(repoRoot, commitSha);
   
   // Get commit message if we have a SHA
   let commitMessage: string | undefined;
@@ -63,6 +69,14 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   
   // Get PR title if in PR context
   const prTitle = getPRTitle(context);
+
+  // Validate commit author was found
+  if (!commitAuthor) {
+    throw new Error(
+      `GitHub Actions: Failed to get commit author from git log for commit ${commitSha || 'HEAD'}. ` +
+      'This should be automatically available in the git repository.'
+    );
+  }
 
   return {
     diff,
@@ -211,72 +225,6 @@ function getCommitSha(context: ReviewContext): string | undefined {
   return undefined;
 }
 
-/**
- * Gets commit author for GitHub Actions
- * Reads from GITHUB_EVENT_PATH JSON file (most reliable)
- * Note: commitSha parameter not used - GitHub provides author info in event JSON
- */
-async function getCommitAuthor(): Promise<{ name: string; email: string }> {
-  const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath) {
-    throw new Error(
-      'GitHub Actions: GITHUB_EVENT_PATH environment variable is not set. ' +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-  
-  if (!fs.existsSync(eventPath)) {
-    throw new Error(
-      `GitHub Actions: GITHUB_EVENT_PATH file does not exist: ${eventPath}. ` +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-  
-  try {
-    const eventData = JSON.parse(fs.readFileSync(eventPath, 'utf-8'));
-    
-    // For push events, use head_commit.author
-    if (eventData.head_commit?.author) {
-      return {
-        name: eventData.head_commit.author.name,
-        email: eventData.head_commit.author.email
-      };
-    }
-    
-    // For PR events, use commits[0].author (first commit in the PR)
-    if (eventData.commits && eventData.commits.length > 0 && eventData.commits[0].author) {
-      return {
-        name: eventData.commits[0].author.name,
-        email: eventData.commits[0].author.email
-      };
-    }
-    
-    // Fallback to pull_request.head.commit.author for PR events
-    if (eventData.pull_request?.head?.commit?.author) {
-      return {
-        name: eventData.pull_request.head.commit.author.name,
-        email: eventData.pull_request.head.commit.author.email
-      };
-    }
-    
-    // If we get here, the event JSON doesn't contain author info
-    throw new Error(
-      `GitHub Actions: GITHUB_EVENT_PATH JSON does not contain commit author information. ` +
-      `Event type: ${eventData.action || 'unknown'}. ` +
-      `This should be automatically provided by GitHub Actions.`
-    );
-  } catch (error: unknown) {
-    // If JSON parsing fails, fail loudly
-    if (error instanceof Error && error.message.includes('GitHub Actions:')) {
-      throw error; // Re-throw our own errors
-    }
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(
-      `GitHub Actions: Failed to read or parse GITHUB_EVENT_PATH JSON: ${errorMessage}. ` +
-      'This should be automatically provided by GitHub Actions.'
-    );
-  }
-}
 
 /**
  * Gets PR title for GitHub Actions

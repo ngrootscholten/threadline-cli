@@ -4,6 +4,7 @@
   "description": "Threadlines CLI - AI-powered linter based on your natural language documentation",
   "main": "dist/index.js",
   "bin": {
+    "threadlines": "./bin/threadline",
     "threadline": "./bin/threadline"
   },
   "files": [
