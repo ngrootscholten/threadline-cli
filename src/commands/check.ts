@@ -35,6 +35,7 @@ async function getContextForEnvironment(environment: Environment, repoRoot: stri
   }
 }
 
+
 // Get CLI version from package.json
 const packageJsonPath = path.join(__dirname, '../../package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
