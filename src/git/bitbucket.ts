@@ -22,6 +22,7 @@ import { execSync } from 'child_process';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
+import { logger } from '../utils/logger';
 
 export interface BitbucketContext {
   diff: GitDiffResult;
@@ -103,10 +104,10 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
     }
     
     // Fetch destination branch on-demand (works with shallow clones)
-    console.log(`  [Bitbucket] Fetching destination branch: origin/${prDestinationBranch}`);
+    logger.debug(`Fetching destination branch: origin/${prDestinationBranch}`);
     await git.fetch(['origin', `${prDestinationBranch}:refs/remotes/origin/${prDestinationBranch}`, '--depth=1']);
     
-    console.log(`  [Bitbucket] PR #${prId}, using origin/${prDestinationBranch}...HEAD`);
+    logger.debug(`PR #${prId}, using origin/${prDestinationBranch}...HEAD`);
     const diff = await git.diff([`origin/${prDestinationBranch}...HEAD`, '-U200']);
     const diffSummary = await git.diffSummary([`origin/${prDestinationBranch}...HEAD`]);
     const changedFiles = diffSummary.files.map(f => f.file);

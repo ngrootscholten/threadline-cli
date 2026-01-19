@@ -14,6 +14,7 @@ if (fs.existsSync(envLocalPath)) {
 import { Command } from 'commander';
 import { checkCommand } from './commands/check';
 import { initCommand } from './commands/init';
+import { enableDebug } from './utils/logger';
 
 const program = new Command();
 
@@ -25,7 +26,13 @@ program
 program
   .command('init')
   .description('Create a template threadline file to get started')
-  .action(initCommand);
+  .option('--debug', 'Enable debug logging (verbose output)')
+  .action((options) => {
+    if (options.debug) {
+      enableDebug();
+    }
+    initCommand();
+  });
 
 program
   .command('check')
@@ -36,19 +43,26 @@ program
   .option('--file <path>', 'Review entire file (all lines as additions)')
   .option('--folder <path>', 'Review all files in folder recursively')
   .option('--files <paths...>', 'Review multiple specified files')
+  .option('--debug', 'Enable debug logging (verbose output)')
   .addHelpText('after', `
 Examples:
   $ threadlines check                    # Check staged/unstaged changes (local dev)
   $ threadlines check --commit HEAD      # Check latest commit locally
   $ threadlines check --file src/api.ts  # Check entire file
   $ threadlines check --full             # Show all results (not just attention items)
+  $ threadlines check --debug            # Enable verbose debug output
 
 Auto-detection in CI:
   - PR/MR context → reviews all changes in the PR/MR
   - Push to any branch → reviews the commit being pushed
   - Local development → reviews staged/unstaged changes
 `)
-  .action(checkCommand);
+  .action((options) => {
+    if (options.debug) {
+      enableDebug();
+    }
+    checkCommand(options);
+  });
 
 program.parse();
 

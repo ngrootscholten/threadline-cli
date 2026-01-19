@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { logger } from '../utils/logger';
 
 const TEMPLATE = `---
 id: example-threadline
@@ -75,7 +76,7 @@ export async function initCommand() {
     console.log(chalk.gray('     (Use npx --yes threadlines check in non-interactive environments)'));
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error(chalk.red(`\n❌ Error: ${errorMessage}`));
+    logger.error(errorMessage);
     process.exit(1);
   }
 }

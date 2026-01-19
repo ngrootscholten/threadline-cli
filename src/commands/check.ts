@@ -9,6 +9,7 @@ import { getBitbucketContext } from '../git/bitbucket';
 import { getVercelContext } from '../git/vercel';
 import { getLocalContext } from '../git/local';
 import { getCommitDiff } from '../git/diff';
+import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
@@ -57,12 +58,12 @@ export async function checkCommand(options: {
   try {
     const isRepo = await git.checkIsRepo();
     if (!isRepo) {
-      console.error(chalk.red('❌ Error: Not a git repository. Threadline requires a git repository.'));
+      logger.error('Not a git repository. Threadline requires a git repository.');
       process.exit(1);
     }
     gitRoot = (await git.revparse(['--show-toplevel'])).trim();
   } catch {
-    console.error(chalk.red('❌ Error: Failed to get git root. Make sure you are in a git repository.'));
+    logger.error('Failed to get git root. Make sure you are in a git repository.');
     process.exit(1);
   }
 
@@ -76,9 +77,9 @@ export async function checkCommand(options: {
   if (!account || account.startsWith('$')) missingVars.push('THREADLINE_ACCOUNT');
   
   if (missingVars.length > 0) {
-    console.error(chalk.red('❌ Error: Missing required environment variables:'));
+    logger.error('Missing required environment variables:');
     for (const varName of missingVars) {
-      console.error(chalk.red(`   • ${varName}`));
+      logger.error(`   • ${varName}`);
     }
     console.log('');
     console.log(chalk.yellow('To fix this:'));
@@ -106,7 +107,7 @@ export async function checkCommand(options: {
 
   try {
     // 1. Find and validate threadlines
-    console.log(chalk.gray('📋 Finding threadlines...'));
+    logger.info('Finding threadlines...');
     const threadlines = await findThreadlines(cwd, gitRoot);
     console.log(chalk.green(`✓ Found ${threadlines.length} threadline(s)\n`));
 
@@ -134,7 +135,7 @@ export async function checkCommand(options: {
     
     // Validate mutually exclusive flags
     if (explicitFlags.length > 1) {
-      console.error(chalk.red('❌ Error: Only one review option can be specified at a time'));
+      logger.error('Only one review option can be specified at a time');
       console.log(chalk.gray('   Options: --commit, --file, --folder, --files'));
       process.exit(1);
     }
@@ -147,7 +148,7 @@ export async function checkCommand(options: {
         const flagName = options.commit ? '--commit' : 
                         options.file ? '--file' : 
                         options.folder ? '--folder' : '--files';
-        console.log(chalk.yellow(`⚠️  Warning: ${flagName} flag ignored in CI environment. Using auto-detection.\n`));
+        logger.warn(`${flagName} flag ignored in CI environment. Using auto-detection.`);
       }
       
       // CI auto-detect: use environment-specific context
@@ -157,7 +158,7 @@ export async function checkCommand(options: {
         gitlab: 'GitLab CI',
         bitbucket: 'Bitbucket Pipelines'
       };
-      console.log(chalk.gray(`📝 Collecting git context for ${envNames[environment]}...`));
+      logger.info(`Collecting git context for ${envNames[environment]}...`);
       
       const envContext = await getContextForEnvironment(environment, repoRoot);
       gitDiff = envContext.diff;
@@ -173,16 +174,16 @@ export async function checkCommand(options: {
     } else {
       // Local environment: support all flags
       if (options.file) {
-        console.log(chalk.gray(`📝 Reading file: ${options.file}...`));
+        logger.info(`Reading file: ${options.file}...`);
         gitDiff = await getFileContent(repoRoot, options.file);
       } else if (options.folder) {
-        console.log(chalk.gray(`📝 Reading folder: ${options.folder}...`));
+        logger.info(`Reading folder: ${options.folder}...`);
         gitDiff = await getFolderContent(repoRoot, options.folder);
       } else if (options.files && options.files.length > 0) {
-        console.log(chalk.gray(`📝 Reading ${options.files.length} file(s)...`));
+        logger.info(`Reading ${options.files.length} file(s)...`);
         gitDiff = await getMultipleFilesContent(repoRoot, options.files);
       } else if (options.commit) {
-        console.log(chalk.gray(`📝 Collecting git changes for commit: ${options.commit}...`));
+        logger.info(`Collecting git changes for commit: ${options.commit}...`);
         gitDiff = await getCommitDiff(repoRoot, options.commit);
         // Use local context for metadata, passing commit SHA for author lookup
         const localContext = await getLocalContext(repoRoot, options.commit);
@@ -196,7 +197,7 @@ export async function checkCommand(options: {
         };
       } else {
         // Local auto-detect: staged/unstaged changes
-        console.log(chalk.gray('📝 Collecting git context for Local...'));
+        logger.info('Collecting git context for Local...');
         const localContext = await getLocalContext(repoRoot);
         gitDiff = localContext.diff;
         repoName = localContext.repoName;
@@ -259,7 +260,7 @@ export async function checkCommand(options: {
                    'https://devthreadline.com';
 
     // 6. Call review API
-    console.log(chalk.gray('🤖 Running threadline checks...'));
+    logger.info('Running threadline checks...');
     const client = new ReviewAPIClient(apiUrl);
     const response = await client.review({
       threadlines: threadlinesWithContext,
@@ -287,7 +288,7 @@ export async function checkCommand(options: {
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error(chalk.red(`\n❌ Error: ${errorMessage}`));
+    logger.error(errorMessage);
     process.exit(1);
   }
 }
