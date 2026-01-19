@@ -82,6 +82,12 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
  * Strategy:
  * - PR context: Compare source branch vs target branch (full PR diff)
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
+ * 
+ * Note: Unlike GitLab/Bitbucket, we don't need to fetch branches on-demand here.
+ * GitHub Actions' `actions/checkout` automatically fetches both base and head refs
+ * for pull_request events, even with the default shallow clone (fetch-depth: 1).
+ * The refs `origin/${GITHUB_BASE_REF}` and `origin/${GITHUB_HEAD_REF}` are available
+ * immediately after checkout.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
@@ -91,6 +97,7 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const headRef = process.env.GITHUB_HEAD_REF;
 
   // PR Context: Compare source vs target branch
+  // No fetch needed - GitHub Actions provides both refs automatically
   if (eventName === 'pull_request') {
     if (!baseRef || !headRef) {
       throw new Error(
