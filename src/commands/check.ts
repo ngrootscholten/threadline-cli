@@ -8,7 +8,7 @@ import { getGitLabContext } from '../git/gitlab';
 import { getBitbucketContext } from '../git/bitbucket';
 import { getVercelContext } from '../git/vercel';
 import { getLocalContext } from '../git/local';
-import { getBranchDiff, getCommitDiff } from '../git/diff';
+import { getCommitDiff } from '../git/diff';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
@@ -41,7 +41,6 @@ const CLI_VERSION = packageJson.version;
 export async function checkCommand(options: { 
   apiUrl?: string; 
   full?: boolean;
-  branch?: string;
   commit?: string;
   file?: string;
   folder?: string;
@@ -131,12 +130,12 @@ export async function checkCommand(options: {
     } = {};
     
     // Check for explicit flags
-    const explicitFlags = [options.branch, options.commit, options.file, options.folder, options.files].filter(Boolean);
+    const explicitFlags = [options.commit, options.file, options.folder, options.files].filter(Boolean);
     
     // Validate mutually exclusive flags
     if (explicitFlags.length > 1) {
       console.error(chalk.red('❌ Error: Only one review option can be specified at a time'));
-      console.log(chalk.gray('   Options: --branch, --commit, --file, --folder, --files'));
+      console.log(chalk.gray('   Options: --commit, --file, --folder, --files'));
       process.exit(1);
     }
     
@@ -145,8 +144,7 @@ export async function checkCommand(options: {
     if (isCIEnvironment(environment)) {
       // Warn if flags are passed in CI - they're meant for local development
       if (explicitFlags.length > 0) {
-        const flagName = options.branch ? '--branch' : 
-                        options.commit ? '--commit' : 
+        const flagName = options.commit ? '--commit' : 
                         options.file ? '--file' : 
                         options.folder ? '--folder' : '--files';
         console.log(chalk.yellow(`⚠️  Warning: ${flagName} flag ignored in CI environment. Using auto-detection.\n`));
@@ -183,19 +181,6 @@ export async function checkCommand(options: {
       } else if (options.files && options.files.length > 0) {
         console.log(chalk.gray(`📝 Reading ${options.files.length} file(s)...`));
         gitDiff = await getMultipleFilesContent(repoRoot, options.files);
-      } else if (options.branch) {
-        console.log(chalk.gray(`📝 Collecting git changes for branch: ${options.branch}...`));
-        gitDiff = await getBranchDiff(repoRoot, options.branch);
-        // Use local context for metadata
-        const localContext = await getLocalContext(repoRoot);
-        repoName = localContext.repoName;
-        branchName = localContext.branchName;
-        metadata = {
-          commitSha: localContext.commitSha,
-          commitMessage: localContext.commitMessage,
-          commitAuthorName: localContext.commitAuthor.name,
-          commitAuthorEmail: localContext.commitAuthor.email
-        };
       } else if (options.commit) {
         console.log(chalk.gray(`📝 Collecting git changes for commit: ${options.commit}...`));
         gitDiff = await getCommitDiff(repoRoot, options.commit);

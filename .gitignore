@@ -30,6 +30,5 @@ coverage/
 yarn.lock
 pnpm-lock.yaml
 
-# Threadlines (example/test files)
-threadlines/
+
 

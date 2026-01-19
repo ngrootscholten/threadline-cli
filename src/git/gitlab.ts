@@ -1,5 +1,5 @@
 /**
- * GitLab CI Environment - Complete Isolation
+ * GitLab CI Environment
  * 
  * All GitLab-specific logic is contained in this file.
  * No dependencies on other environment implementations.
@@ -29,7 +29,7 @@ export interface GitLabContext {
 }
 
 /**
- * Gets all GitLab context in one call - completely isolated from other environments.
+ * Gets all GitLab context
  */
 export async function getGitLabContext(repoRoot: string): Promise<GitLabContext> {
   const git: SimpleGit = simpleGit(repoRoot);
@@ -77,31 +77,21 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
 /**
  * Get diff for GitLab CI environment
  * 
- * GitLab CI does a shallow clone of ONLY the current branch. The default branch
- * (e.g., origin/main) is NOT available by default. We fetch it on-demand.
+ * Strategy:
+ * - MR context: Fetch target branch, compare source vs target (full MR diff)
+ * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
- * Scenarios handled:
- * 
- * 1. MR Context (CI_MERGE_REQUEST_IID is set):
- *    - Fetch target branch, then diff target vs source
- * 
- * 2. Feature Branch Push (CI_COMMIT_REF_NAME != CI_DEFAULT_BRANCH):
- *    - Fetch default branch, then diff default vs feature
- * 
- * 3. Default Branch Push (CI_COMMIT_REF_NAME == CI_DEFAULT_BRANCH):
- *    - Use HEAD~1...HEAD (last commit only, no fetch needed)
+ * Note: GitLab CI does a shallow clone, so we fetch the target branch for MR context.
+ * For regular pushes, HEAD~1...HEAD works without additional fetching.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
-  // Get GitLab CI environment variables
   const mrIid = process.env.CI_MERGE_REQUEST_IID;
   const targetBranch = process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
   const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME;
-  const refName = process.env.CI_COMMIT_REF_NAME;
-  const defaultBranch = process.env.CI_DEFAULT_BRANCH || 'main';
 
-  // Scenario 1: MR Context
+  // MR Context: Fetch target branch and compare
   if (mrIid) {
     if (!targetBranch || !sourceBranch) {
       throw new Error(
@@ -118,27 +108,9 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
     return { diff: diff || '', changedFiles };
   }
 
-  if (!refName) {
-    throw new Error(
-      'GitLab CI: CI_COMMIT_REF_NAME environment variable is not set. ' +
-      'This should be automatically provided by GitLab CI.'
-    );
-  }
-
-  // Scenario 3: Default Branch Push
-  if (refName === defaultBranch) {
-    console.log(`  [GitLab] Push to default branch (${defaultBranch}), using HEAD~1...HEAD`);
-    const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
-    const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
-    const changedFiles = diffSummary.files.map(f => f.file);
-    return { diff: diff || '', changedFiles };
-  }
-
-  // Scenario 2: Feature Branch Push
-  console.log(`  [GitLab] Feature branch push, fetching default branch: origin/${defaultBranch}`);
-  await git.fetch(['origin', `${defaultBranch}:refs/remotes/origin/${defaultBranch}`, '--depth=1']);
-  const diff = await git.diff([`origin/${defaultBranch}...origin/${refName}`, '-U200']);
-  const diffSummary = await git.diffSummary([`origin/${defaultBranch}...origin/${refName}`]);
+  // Any push (main or feature branch): Review last commit only
+  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
+  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
   const changedFiles = diffSummary.files.map(f => f.file);
   return { diff: diff || '', changedFiles };
 }
@@ -172,10 +144,13 @@ async function getBranchName(): Promise<string> {
 }
 
 /**
- * Detects GitLab context (MR, branch, or commit)
+ * Detects GitLab context (MR or commit)
+ * 
+ * - MR context: When CI_MERGE_REQUEST_IID is set
+ * - Commit context: Any push (main or feature branch) - reviews single commit
  */
 function detectContext(): ReviewContext {
-  // 1. Check for MR context
+  // MR context
   const mrIid = process.env.CI_MERGE_REQUEST_IID;
   if (mrIid) {
     const targetBranch = process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
@@ -191,15 +166,7 @@ function detectContext(): ReviewContext {
     }
   }
   
-  // 2. Check for branch context
-  if (process.env.CI_COMMIT_REF_NAME) {
-    return {
-      type: 'branch',
-      branchName: process.env.CI_COMMIT_REF_NAME
-    };
-  }
-  
-  // 3. Check for commit context
+  // Any push (main or feature branch) → commit context
   if (process.env.CI_COMMIT_SHA) {
     return {
       type: 'commit',
@@ -207,8 +174,11 @@ function detectContext(): ReviewContext {
     };
   }
   
-  // 4. Fallback to local (shouldn't happen in GitLab CI, but TypeScript needs it)
-  return { type: 'local' };
+  throw new Error(
+    'GitLab CI: Could not detect context. ' +
+    'Expected CI_MERGE_REQUEST_IID or CI_COMMIT_SHA to be set. ' +
+    'This should be automatically provided by GitLab CI.'
+  );
 }
 
 /**
@@ -219,7 +189,7 @@ function getCommitSha(context: ReviewContext): string | undefined {
     return context.commitSha;
   }
   
-  if (context.type === 'branch' || context.type === 'mr') {
+  if (context.type === 'mr') {
     return process.env.CI_COMMIT_SHA;
   }
   

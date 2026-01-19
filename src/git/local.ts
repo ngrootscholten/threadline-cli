@@ -1,5 +1,5 @@
 /**
- * Local Environment - Complete Isolation
+ * Local Environment
  * 
  * All Local-specific logic is contained in this file.
  * No dependencies on other environment implementations.
@@ -28,7 +28,7 @@ export interface LocalContext {
 }
 
 /**
- * Gets all Local context in one call - completely isolated from other environments.
+ * Gets all Local context 
  */
 export async function getLocalContext(
   repoRoot: string,

@@ -1,5 +1,5 @@
 /**
- * Bitbucket Pipelines Environment - Complete Isolation
+ * Bitbucket Pipelines Environment
  * 
  * All Bitbucket-specific logic is contained in this file.
  * No dependencies on other environment implementations.
@@ -80,32 +80,19 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
 /**
  * Get diff for Bitbucket Pipelines environment
  * 
- * Bitbucket Pipelines with depth: full has full git history available,
- * including origin/main. Unlike GitLab, no fetch is needed.
+ * Strategy:
+ * - PR context: Compare source branch vs target branch (full PR diff)
+ * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
- * Diff Strategy:
- * 
- * | Scenario                  | Target Branch Known?                        | Diff Command                              |
- * |---------------------------|---------------------------------------------|-------------------------------------------|
- * | PR                        | ✅ Yes - BITBUCKET_PR_DESTINATION_BRANCH    | origin/${destination}...HEAD              |
- * | Feature branch (no PR)    | ❌ No - detect main/master                  | origin/main...HEAD or origin/master...HEAD|
- * | Push to default branch    | N/A                                         | HEAD~1...HEAD                             |
- * 
- * Key point: For PRs, Bitbucket provides BITBUCKET_PR_DESTINATION_BRANCH - this is the
- * most relevant comparison point because it's where the code will be merged.
- * 
- * For non-PR feature branches, Bitbucket does NOT provide a default branch env var
- * (unlike GitLab's CI_DEFAULT_BRANCH), so we detect by checking if origin/main or
- * origin/master exists.
+ * Note: Bitbucket Pipelines with depth: full has full git history available.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
-  const branchName = process.env.BITBUCKET_BRANCH;
   const prId = process.env.BITBUCKET_PR_ID;
   const prDestinationBranch = process.env.BITBUCKET_PR_DESTINATION_BRANCH;
 
-  // Scenario 1: PR context - use the target branch from env var
+  // PR Context: Compare source vs target branch
   if (prId) {
     if (!prDestinationBranch) {
       throw new Error(
@@ -121,77 +108,11 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
     return { diff: diff || '', changedFiles };
   }
 
-  // Scenario 2: Non-PR push
-  if (!branchName) {
-    throw new Error(
-      'Bitbucket Pipelines: BITBUCKET_BRANCH environment variable is not set. ' +
-      'This should be automatically provided by Bitbucket Pipelines.'
-    );
-  }
-
-  // Detect the default branch (Bitbucket doesn't provide this as an env var)
-  const defaultBranch = await detectDefaultBranch(git);
-
-  // If we're on the default branch, just show the last commit
-  if (branchName === defaultBranch) {
-    console.log(`  [Bitbucket] Push to ${defaultBranch}, using HEAD~1...HEAD`);
-    const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
-    const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
-    const changedFiles = diffSummary.files.map(f => f.file);
-    return { diff: diff || '', changedFiles };
-  }
-
-  // Feature branch: compare against default branch
-  // This shows all changes the branch introduces, correctly excluding
-  // any commits merged in from the default branch
-  console.log(`  [Bitbucket] Feature branch "${branchName}", using origin/${defaultBranch}...HEAD`);
-  const diff = await git.diff([`origin/${defaultBranch}...HEAD`, '-U200']);
-  const diffSummary = await git.diffSummary([`origin/${defaultBranch}...HEAD`]);
+  // Any push (main or feature branch): Review last commit only
+  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
+  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
   const changedFiles = diffSummary.files.map(f => f.file);
   return { diff: diff || '', changedFiles };
-}
-
-/**
- * Detect the default branch for Bitbucket Pipelines.
- * 
- * Bitbucket does NOT provide a default branch env var (unlike GitLab's CI_DEFAULT_BRANCH
- * or GitHub's repository.default_branch in the event JSON).
- * 
- * We try 'main' first (most common), then 'master' as fallback.
- * This covers the vast majority of repositories.
- *  
- * ---
- * Design Decision: We compare against main instead of just checking the last commit
- * 
- * Threadlines assumes that feature branches are intended to eventually merge to the
- * default branch. Comparing against main shows ALL changes the branch introduces,
- * which is what you want to review before merging.
- * 
- * Per-commit checking happens during local development.
- * ---
- */
-async function detectDefaultBranch(git: SimpleGit): Promise<string> {
-  // Try 'main' first (modern default)
-  try {
-    await git.revparse(['--verify', 'origin/main']);
-    return 'main';
-  } catch {
-    // origin/main doesn't exist, try master
-  }
-  
-  // Try 'master' (legacy default)
-  try {
-    await git.revparse(['--verify', 'origin/master']);
-    return 'master';
-  } catch {
-    // origin/master doesn't exist either
-  }
-  
-  throw new Error(
-    'Bitbucket Pipelines: Cannot determine default branch. ' +
-    'Neither origin/main nor origin/master found. ' +
-    'For repositories with a different default branch, create a PR to trigger branch comparison.'
-  );
 }
 
 /**
@@ -226,7 +147,10 @@ function getBranchName(): string {
 }
 
 /**
- * Detects Bitbucket context (PR, branch, or commit)
+ * Detects Bitbucket context (PR or commit)
+ * 
+ * - PR context: When BITBUCKET_PR_ID is set
+ * - Commit context: Any push (main or feature branch) - reviews single commit
  */
 function detectContext(): ReviewContext {
   // PR context
@@ -243,15 +167,7 @@ function detectContext(): ReviewContext {
     };
   }
   
-  // Branch context
-  if (process.env.BITBUCKET_BRANCH) {
-    return {
-      type: 'branch',
-      branchName: process.env.BITBUCKET_BRANCH
-    };
-  }
-  
-  // Commit context
+  // Any push (main or feature branch) → commit context
   if (process.env.BITBUCKET_COMMIT) {
     return {
       type: 'commit',
@@ -259,8 +175,11 @@ function detectContext(): ReviewContext {
     };
   }
   
-  // Fallback to local (shouldn't happen in Bitbucket Pipelines)
-  return { type: 'local' };
+  throw new Error(
+    'Bitbucket Pipelines: Could not detect context. ' +
+    'Expected BITBUCKET_PR_ID or BITBUCKET_COMMIT to be set. ' +
+    'This should be automatically provided by Bitbucket Pipelines.'
+  );
 }
 
 /**

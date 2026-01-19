@@ -1,5 +1,5 @@
 /**
- * Vercel Environment - Complete Isolation
+ * Vercel Environment
  * 
  * All Vercel-specific logic is contained in this file.
  * No dependencies on other environment implementations.
@@ -29,7 +29,7 @@ export interface VercelContext {
 }
 
 /**
- * Gets all Vercel context in one call - completely isolated from other environments.
+ * Gets all Vercel context
  */
 export async function getVercelContext(repoRoot: string): Promise<VercelContext> {
   const git: SimpleGit = simpleGit(repoRoot);

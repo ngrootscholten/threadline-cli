@@ -1,5 +1,5 @@
 /**
- * GitHub Actions Environment - Complete Isolation
+ * GitHub Actions Environment
  * 
  * All GitHub-specific logic is contained in this file.
  * No dependencies on other environment implementations.
@@ -15,7 +15,6 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import * as fs from 'fs';
 import { GitDiffResult } from '../types/git';
-import { getDefaultBranchName } from './repo';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
 
@@ -31,7 +30,7 @@ export interface GitHubContext {
 }
 
 /**
- * Gets all GitHub context in one call - completely isolated from other environments.
+ * Gets all GitHub context 
  */
 export async function getGitHubContext(repoRoot: string): Promise<GitHubContext> {
   const git: SimpleGit = simpleGit(repoRoot);
@@ -49,7 +48,7 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   const context = detectContext();
   const commitSha = getCommitSha(context);
   
-  // Get commit author (fails loudly if unavailable)
+  
   // Note: commitSha parameter not needed - GitHub reads from GITHUB_EVENT_PATH JSON
   const commitAuthor = await getCommitAuthor();
   
@@ -79,19 +78,19 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
 
 /**
  * Gets diff for GitHub Actions CI environment
+ * 
+ * Strategy:
+ * - PR context: Compare source branch vs target branch (full PR diff)
+ * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
-  const defaultBranch = await getDefaultBranchName(repoRoot);
 
-  // Determine context from GitHub environment variables
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
   const headRef = process.env.GITHUB_HEAD_REF;
-  const refName = process.env.GITHUB_REF_NAME;
-  const commitSha = process.env.GITHUB_SHA;
 
-  // Scenario 1: PR Context
+  // PR Context: Compare source vs target branch
   if (eventName === 'pull_request') {
     if (!baseRef || !headRef) {
       throw new Error(
@@ -110,43 +109,15 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
     };
   }
 
-  // Scenario 2 & 4: Default Branch Push
-  if (refName === defaultBranch && commitSha) {
-    try {
-      const diff = await git.diff([`origin/${defaultBranch}~1...origin/${defaultBranch}`, '-U200']);
-      const diffSummary = await git.diffSummary([`origin/${defaultBranch}~1...origin/${defaultBranch}`]);
-      const changedFiles = diffSummary.files.map(f => f.file);
+  // Any push (main or feature branch): Review last commit only
+  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
+  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
+  const changedFiles = diffSummary.files.map(f => f.file);
 
-      return {
-        diff: diff || '',
-        changedFiles
-      };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(
-        `Could not get diff for default branch '${defaultBranch}'. ` +
-        `This might be the first commit on the branch. Error: ${errorMessage}`
-      );
-    }
-  }
-
-  // Scenario 3: Feature Branch Push
-  if (refName) {
-    const diff = await git.diff([`origin/${defaultBranch}...origin/${refName}`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${defaultBranch}...origin/${refName}`]);
-    const changedFiles = diffSummary.files.map(f => f.file);
-
-    return {
-      diff: diff || '',
-      changedFiles
-    };
-  }
-
-  throw new Error(
-    'GitHub Actions environment detected but no valid context found. ' +
-    'Expected GITHUB_EVENT_NAME="pull_request" (with GITHUB_BASE_REF/GITHUB_HEAD_REF) ' +
-    'or GITHUB_REF_NAME for branch context.'
-  );
+  return {
+    diff: diff || '',
+    changedFiles
+  };
 }
 
 /**
@@ -181,10 +152,13 @@ async function getBranchName(): Promise<string> {
 }
 
 /**
- * Detects GitHub context (PR, branch, or commit)
+ * Detects GitHub context (PR or commit)
+ * 
+ * - PR context: When GITHUB_EVENT_NAME is 'pull_request'
+ * - Commit context: Any push (main or feature branch) - reviews single commit
  */
 function detectContext(): ReviewContext {
-  // 1. Check for PR context
+  // PR context
   if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
     const targetBranch = process.env.GITHUB_BASE_REF;
     const sourceBranch = process.env.GITHUB_HEAD_REF;
@@ -200,15 +174,7 @@ function detectContext(): ReviewContext {
     }
   }
   
-  // 2. Check for branch context
-  if (process.env.GITHUB_REF_NAME) {
-    return {
-      type: 'branch',
-      branchName: process.env.GITHUB_REF_NAME
-    };
-  }
-  
-  // 3. Check for commit context
+  // Any push (main or feature branch) → commit context
   if (process.env.GITHUB_SHA) {
     return {
       type: 'commit',
@@ -216,8 +182,11 @@ function detectContext(): ReviewContext {
     };
   }
   
-  // 4. Fallback to local (shouldn't happen in GitHub Actions, but TypeScript needs it)
-  return { type: 'local' };
+  throw new Error(
+    'GitHub Actions: Could not detect context. ' +
+    'Expected GITHUB_EVENT_NAME="pull_request" or GITHUB_SHA to be set. ' +
+    'This should be automatically provided by GitHub Actions.'
+  );
 }
 
 /**
@@ -228,7 +197,7 @@ function getCommitSha(context: ReviewContext): string | undefined {
     return context.commitSha;
   }
   
-  if (context.type === 'branch' || context.type === 'pr') {
+  if (context.type === 'pr') {
     return process.env.GITHUB_SHA;
   }
   
