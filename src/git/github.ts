@@ -106,8 +106,9 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
 
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
+  const headRef = process.env.GITHUB_HEAD_REF;
 
-  // PR Context: Fetch base branch and compare with HEAD (merge commit)
+  // PR Context: Only pull_request events have GITHUB_BASE_REF set
   if (eventName === 'pull_request') {
     if (!baseRef) {
       throw new Error(
@@ -118,11 +119,21 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
 
     // Fetch base branch on-demand (works with shallow clones)
     logger.debug(`Fetching base branch: origin/${baseRef}`);
-    await git.fetch(['origin', `${baseRef}:refs/remotes/origin/${baseRef}`, '--depth=1']);
+    try {
+      await git.fetch(['origin', `${baseRef}:refs/remotes/origin/${baseRef}`, '--depth=1']);
+    } catch (fetchError) {
+      throw new Error(
+        `Failed to fetch base branch origin/${baseRef}. ` +
+        `This is required for PR diff comparison. Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
+      );
+    }
     
-    logger.debug(`PR context, using origin/${baseRef}...HEAD`);
-    const diff = await git.diff([`origin/${baseRef}...HEAD`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${baseRef}...HEAD`]);
+    logger.debug(`PR context, using origin/${baseRef}..HEAD (two dots for direct comparison)`);
+    // Use two dots (..) instead of three dots (...) for direct comparison
+    // Three dots requires finding merge base which can fail with shallow clones
+    // Two dots shows all changes in HEAD that aren't in origin/${baseRef}
+    const diff = await git.diff([`origin/${baseRef}..HEAD`, '-U200']);
+    const diffSummary = await git.diffSummary([`origin/${baseRef}..HEAD`]);
     const changedFiles = diffSummary.files.map(f => f.file);
 
     return {
@@ -132,14 +143,16 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   }
 
   // Any push (main or feature branch): Review last commit only
-  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
-  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
-  const changedFiles = diffSummary.files.map(f => f.file);
-
-  return {
-    diff: diff || '',
-    changedFiles
-  };
+  // Use git show HEAD - works with shallow clones and shows the commit diff
+  const diff = await git.show(['HEAD', '--format=', '--no-color', '-U200']);
+  // Extract changed files from git show
+  const showNameOnly = await git.show(['HEAD', '--name-only', '--format=', '--pretty=format:']);
+  const changedFiles = showNameOnly
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .map(line => line.trim());
+  
+  return { diff: diff || '', changedFiles };
 }
 
 /**
