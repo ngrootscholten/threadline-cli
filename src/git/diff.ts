@@ -1,4 +1,5 @@
 import simpleGit, { SimpleGit } from 'simple-git';
+import { execSync } from 'child_process';
 
 export interface GitDiffResult {
   diff: string;
@@ -25,32 +26,30 @@ export async function getCommitMessage(repoRoot: string, sha: string): Promise<s
 /**
  * Get commit author name and email for a specific commit SHA or HEAD.
  * 
- * Uses git log to extract author information from the commit.
+ * Uses raw git log command to extract author information.
  * Works in all environments where git is available.
  */
 export async function getCommitAuthor(
   repoRoot: string,
   sha?: string
 ): Promise<{ name: string; email: string } | null> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   try {
-    let logResult;
-    
-    if (sha) {
-      // Use git log for specific commit SHA
-      logResult = await git.log({ from: sha, to: sha, maxCount: 1 });
-    } else {
-      // Use git log for HEAD (local environment only)
-      logResult = await git.log({ maxCount: 1 });
-    }
+    // Use raw git command (same as test scripts) - more reliable than simple-git API
+    const commitRef = sha || 'HEAD';
+    const command = `git log -1 --format="%an <%ae>" ${commitRef}`;
+    const output = execSync(command, { 
+      encoding: 'utf-8', 
+      cwd: repoRoot 
+    }).trim();
 
-    if (!logResult.latest) {
+    // Parse output: "Name <email>"
+    const match = output.match(/^(.+?)\s*<(.+?)>$/);
+    if (!match) {
       return null;
     }
 
-    const name = logResult.latest.author_name?.trim();
-    const email = logResult.latest.author_email?.trim();
+    const name = match[1].trim();
+    const email = match[2].trim();
 
     if (!name || !email) {
       return null;
