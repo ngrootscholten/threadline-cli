@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { logger } from '../utils/logger';
+import { DEFAULT_CONFIG } from '../utils/config-file';
 
 const TEMPLATE = `---
 id: example-threadline
@@ -39,12 +40,20 @@ export async function initCommand() {
   const repoRoot = process.cwd();
   const threadlinesDir = path.join(repoRoot, 'threadlines');
   const exampleFile = path.join(threadlinesDir, 'example.md');
+  const configFile = path.join(repoRoot, '.threadlinerc');
 
   try {
     // Create threadlines directory if it doesn't exist
     if (!fs.existsSync(threadlinesDir)) {
       fs.mkdirSync(threadlinesDir, { recursive: true });
       console.log(chalk.green(`✓ Created /threadlines directory`));
+    }
+
+    // Create .threadlinerc if it doesn't exist
+    if (!fs.existsSync(configFile)) {
+      const configContent = JSON.stringify(DEFAULT_CONFIG, null, 2);
+      fs.writeFileSync(configFile, configContent, 'utf-8');
+      console.log(chalk.green(`✓ Created .threadlinerc`));
     }
 
     // Check if example file already exists

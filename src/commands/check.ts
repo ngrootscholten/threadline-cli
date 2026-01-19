@@ -9,6 +9,7 @@ import { getBitbucketContext } from '../git/bitbucket';
 import { getVercelContext } from '../git/vercel';
 import { getLocalContext } from '../git/local';
 import { getCommitDiff } from '../git/diff';
+import { loadConfig } from '../utils/config-file';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -40,7 +41,6 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const CLI_VERSION = packageJson.version;
 
 export async function checkCommand(options: { 
-  apiUrl?: string; 
   full?: boolean;
   commit?: string;
   file?: string;
@@ -49,6 +49,9 @@ export async function checkCommand(options: {
 }) {
   const cwd = process.cwd();
   const repoRoot = cwd; // Keep for backward compatibility with rest of function
+  
+  // Load configuration
+  const config = await loadConfig(cwd);
   
   console.log(chalk.blue(`🔍 Threadline CLI v${CLI_VERSION}: Checking code against your threadlines...\n`));
   
@@ -254,14 +257,9 @@ export async function checkCommand(options: {
       };
     });
 
-    // 5. Get API URL
-    const apiUrl = options.apiUrl || 
-                   process.env.THREADLINE_API_URL || 
-                   'https://devthreadline.com';
-
-    // 6. Call review API
+    // 5. Call review API
     logger.info('Running threadline checks...');
-    const client = new ReviewAPIClient(apiUrl);
+    const client = new ReviewAPIClient(config.api_url);
     const response = await client.review({
       threadlines: threadlinesWithContext,
       diff: gitDiff.diff,
