@@ -81,10 +81,11 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
  * Get diff for Bitbucket Pipelines environment
  * 
  * Strategy:
- * - PR context: Compare source branch vs target branch (full PR diff)
+ * - PR context: Fetch destination branch on-demand, compare source vs target (full PR diff)
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
- * Note: Bitbucket Pipelines with depth: full has full git history available.
+ * Note: We fetch the destination branch on-demand so this works with shallow clones.
+ * Users don't need `depth: full` in their bitbucket-pipelines.yml.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
@@ -92,7 +93,7 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   const prId = process.env.BITBUCKET_PR_ID;
   const prDestinationBranch = process.env.BITBUCKET_PR_DESTINATION_BRANCH;
 
-  // PR Context: Compare source vs target branch
+  // PR Context: Fetch destination branch and compare
   if (prId) {
     if (!prDestinationBranch) {
       throw new Error(
@@ -100,6 +101,10 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
         'This should be automatically provided by Bitbucket Pipelines.'
       );
     }
+    
+    // Fetch destination branch on-demand (works with shallow clones)
+    console.log(`  [Bitbucket] Fetching destination branch: origin/${prDestinationBranch}`);
+    await git.fetch(['origin', `${prDestinationBranch}:refs/remotes/origin/${prDestinationBranch}`, '--depth=1']);
     
     console.log(`  [Bitbucket] PR #${prId}, using origin/${prDestinationBranch}...HEAD`);
     const diff = await git.diff([`origin/${prDestinationBranch}...HEAD`, '-U200']);
