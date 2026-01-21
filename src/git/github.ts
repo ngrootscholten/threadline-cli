@@ -16,6 +16,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
+import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
 
 export interface GitHubContext {
@@ -27,6 +28,7 @@ export interface GitHubContext {
   commitAuthor: { name: string; email: string };
   prTitle?: string;
   context: ReviewContext;
+  reviewContext: ReviewContextType;
 }
 
 /**
@@ -46,6 +48,7 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   const repoName = await getRepoName();
   const branchName = await getBranchName();
   const context = detectContext();
+  const reviewContext = detectReviewContext();
   const commitSha = getCommitSha(context);
   
   // Validate commit SHA is available (should always be set in GitHub Actions)
@@ -87,7 +90,8 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
     commitMessage,
     commitAuthor,
     prTitle,
-    context
+    context,
+    reviewContext
   };
 }
 
@@ -238,6 +242,19 @@ function getCommitSha(context: ReviewContext): string | undefined {
   return undefined;
 }
 
+
+/**
+ * Detects review context type for API (simple string type)
+ */
+function detectReviewContext(): ReviewContextType {
+  // PR context
+  if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
+    return 'pr';
+  }
+  
+  // Commit context (any push)
+  return 'commit';
+}
 
 /**
  * Gets PR title for GitHub Actions

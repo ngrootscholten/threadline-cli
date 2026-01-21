@@ -22,6 +22,7 @@ import { execSync } from 'child_process';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
+import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
 
 export interface BitbucketContext {
@@ -33,6 +34,7 @@ export interface BitbucketContext {
   commitAuthor: { name: string; email: string };
   prTitle?: string;
   context: ReviewContext;
+  reviewContext: ReviewContextType;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
   const repoName = getRepoName();
   const branchName = getBranchName();
   const context = detectContext();
+  const reviewContext = detectReviewContext();
   const commitSha = getCommitSha();
   
   // Get commit author (from git log - Bitbucket doesn't provide this as env var)
@@ -74,7 +77,8 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
     commitMessage,
     commitAuthor,
     prTitle: undefined, // Bitbucket doesn't expose PR title as env var
-    context
+    context,
+    reviewContext
   };
 }
 
@@ -186,6 +190,19 @@ function detectContext(): ReviewContext {
     'Expected BITBUCKET_PR_ID or BITBUCKET_COMMIT to be set. ' +
     'This should be automatically provided by Bitbucket Pipelines.'
   );
+}
+
+/**
+ * Detects review context type for API (simple string type)
+ */
+function detectReviewContext(): ReviewContextType {
+  // PR context
+  if (process.env.BITBUCKET_PR_ID) {
+    return 'pr';
+  }
+  
+  // Commit context (any push)
+  return 'commit';
 }
 
 /**

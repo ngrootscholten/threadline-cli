@@ -23,7 +23,10 @@ export interface ReviewRequest {
   prTitle?: string;      // PR/MR title (when GitLab MR context available)
   environment?: string;  // Environment where check was run: 'vercel', 'github', 'gitlab', 'local'
   cliVersion?: string;   // CLI version that ran this check
+  reviewContext: ReviewContextType; // REQUIRED: Context type - 'local', 'commit', 'pr' (CI), or 'file', 'folder', 'files' (local only)
 }
+
+export type ReviewContextType = 'local' | 'commit' | 'pr' | 'file' | 'folder' | 'files';
 
 export interface ExpertResult {
   expertId: string;

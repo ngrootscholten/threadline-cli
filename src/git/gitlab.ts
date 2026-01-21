@@ -16,6 +16,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
+import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
 
 export interface GitLabContext {
@@ -27,6 +28,7 @@ export interface GitLabContext {
   commitAuthor: { name: string; email: string };
   prTitle?: string; // MR title
   context: ReviewContext;
+  reviewContext: ReviewContextType;
 }
 
 /**
@@ -46,6 +48,7 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
   const repoName = await getRepoName();
   const branchName = await getBranchName();
   const context = detectContext();
+  const reviewContext = detectReviewContext();
   const commitSha = getCommitSha(context);
   
   // Get commit author (fails loudly if unavailable)
@@ -71,7 +74,8 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
     commitMessage,
     commitAuthor,
     prTitle,
-    context
+    context,
+    reviewContext
   };
 }
 
@@ -180,6 +184,19 @@ function detectContext(): ReviewContext {
     'Expected CI_MERGE_REQUEST_IID or CI_COMMIT_SHA to be set. ' +
     'This should be automatically provided by GitLab CI.'
   );
+}
+
+/**
+ * Detects review context type for API (simple string type)
+ */
+function detectReviewContext(): ReviewContextType {
+  // MR context
+  if (process.env.CI_MERGE_REQUEST_IID) {
+    return 'pr';
+  }
+  
+  // Commit context (any push)
+  return 'commit';
 }
 
 /**

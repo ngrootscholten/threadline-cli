@@ -15,6 +15,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
+import { ReviewContextType } from '../api/client';
 
 export interface LocalContext {
   diff: GitDiffResult;
@@ -25,6 +26,7 @@ export interface LocalContext {
   commitAuthor: { name: string; email: string };
   prTitle?: string; // Not applicable for local, but included for consistency
   context: ReviewContext;
+  reviewContext: ReviewContextType;
 }
 
 /**
@@ -47,6 +49,7 @@ export async function getLocalContext(
   const repoName = await getRepoName(repoRoot);
   const branchName = await getBranchName(repoRoot);
   const context: ReviewContext = commitSha ? { type: 'commit', commitSha } : { type: 'local' };
+  const reviewContext: ReviewContextType = commitSha ? 'commit' : 'local';
   
   // Get commit author (fails loudly if unavailable)
   const commitAuthor = commitSha
@@ -70,7 +73,8 @@ export async function getLocalContext(
     commitMessage,
     commitAuthor,
     prTitle: undefined, // Not applicable for local
-    context
+    context,
+    reviewContext
   };
 }
 

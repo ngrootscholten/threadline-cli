@@ -16,6 +16,7 @@ import { execSync } from 'child_process';
 import { GitDiffResult } from '../types/git';
 import { getCommitMessage } from './diff';
 import { ReviewContext } from '../utils/context';
+import { ReviewContextType } from '../api/client';
 
 export interface VercelContext {
   diff: GitDiffResult;
@@ -26,6 +27,7 @@ export interface VercelContext {
   commitAuthor: { name: string; email: string };
   prTitle?: string; // Not applicable for Vercel, but included for consistency
   context: ReviewContext;
+  reviewContext: ReviewContextType;
 }
 
 /**
@@ -46,6 +48,7 @@ export async function getVercelContext(repoRoot: string): Promise<VercelContext>
   const branchName = await getBranchName();
   const commitSha = getCommitSha();
   const context: ReviewContext = { type: 'commit', commitSha };
+  const reviewContext: ReviewContextType = 'commit';
   
   // Get commit author (fails loudly if unavailable)
   const commitAuthor = await getCommitAuthorForVercel(repoRoot, commitSha);
@@ -64,7 +67,8 @@ export async function getVercelContext(repoRoot: string): Promise<VercelContext>
     commitSha,
     commitMessage,
     commitAuthor,
-    context
+    context,
+    reviewContext
   };
 }
 

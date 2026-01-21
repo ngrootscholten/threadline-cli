@@ -3,6 +3,7 @@ import { getFileContent, getFolderContent, getMultipleFilesContent } from '../gi
 import { ReviewAPIClient, ExpertResult, ReviewResponse } from '../api/client';
 import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
+import { ReviewContextType } from '../api/client';
 import { getGitHubContext } from '../git/github';
 import { getGitLabContext } from '../git/gitlab';
 import { getBitbucketContext } from '../git/bitbucket';
@@ -124,9 +125,11 @@ export async function checkCommand(options: {
 
     // 2. Detect environment and context
     const environment = detectEnvironment();
+    
     let gitDiff: { diff: string; changedFiles: string[] };
     let repoName: string | undefined;
     let branchName: string | undefined;
+    let reviewContext: ReviewContextType;
     let metadata: {
       commitSha?: string;
       commitMessage?: string;
@@ -169,6 +172,7 @@ export async function checkCommand(options: {
       gitDiff = envContext.diff;
       repoName = envContext.repoName;
       branchName = envContext.branchName;
+      reviewContext = envContext.reviewContext; // Get from CI context
       metadata = {
         commitSha: envContext.commitSha,
         commitMessage: envContext.commitMessage,
@@ -178,6 +182,19 @@ export async function checkCommand(options: {
       };
     } else {
       // Local environment: support all flags
+      // Detect review context from flags (priority order: file > folder > files > commit > local)
+      if (options.file) {
+        reviewContext = 'file';
+      } else if (options.folder) {
+        reviewContext = 'folder';
+      } else if (options.files && options.files.length > 0) {
+        reviewContext = 'files';
+      } else if (options.commit) {
+        reviewContext = 'commit';
+      } else {
+        reviewContext = 'local';
+      }
+      
       if (options.file) {
         logger.info(`Reading file: ${options.file}...`);
         gitDiff = await getFileContent(repoRoot, options.file);
@@ -276,7 +293,8 @@ export async function checkCommand(options: {
       commitAuthorEmail: metadata.commitAuthorEmail,
       prTitle: metadata.prTitle,
       environment: environment,
-      cliVersion: CLI_VERSION
+      cliVersion: CLI_VERSION,
+      reviewContext: reviewContext
     });
 
     // 7. Display results (with filtering if --full not specified)
