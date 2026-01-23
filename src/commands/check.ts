@@ -81,9 +81,10 @@ export async function checkCommand(options: {
   const account = getThreadlineAccount();
   const missingVars: string[] = [];
   
-  // Check for undefined, empty string, or literal unexpanded variable (GitLab keeps "$VAR" literal)
-  if (!apiKey || apiKey.startsWith('$')) missingVars.push('THREADLINE_API_KEY');
-  if (!account || account.startsWith('$')) missingVars.push('THREADLINE_ACCOUNT');
+  // Check for undefined, empty string, or literal unexpanded variable
+  // GitLab CI keeps variables as literal "$VAR" if not defined in CI/CD settings
+  if (!apiKey || apiKey === '$THREADLINE_API_KEY') missingVars.push('THREADLINE_API_KEY');
+  if (!account || account === '$THREADLINE_ACCOUNT') missingVars.push('THREADLINE_ACCOUNT');
   
   if (missingVars.length > 0) {
     logger.error('Missing required environment variables:');
@@ -248,11 +249,16 @@ export async function checkCommand(options: {
     if (threadline.contextFiles) {
       for (const contextFile of threadline.contextFiles) {
         const fullPath = path.join(repoRoot, contextFile);
-        if (fs.existsSync(fullPath)) {
-          contextContent[contextFile] = fs.readFileSync(fullPath, 'utf-8');
-        } else {
-          throw new Error(`Context file not found for threadline '${threadline.id}': ${contextFile}`);
-        }
+          if (fs.existsSync(fullPath)) {
+            try {
+              contextContent[contextFile] = fs.readFileSync(fullPath, 'utf-8');
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              throw new Error(`Failed to read context file '${contextFile}' for threadline '${threadline.id}': ${message}`);
+            }
+          } else {
+            throw new Error(`Context file not found for threadline '${threadline.id}': ${contextFile}`);
+          }
       }
     }
 
@@ -414,9 +420,6 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
           console.log(chalk.gray('  Raw response:'));
           console.log(chalk.gray(JSON.stringify(item.error.rawResponse, null, 2).split('\n').map(line => '    ' + line).join('\n')));
         }
-      } else if (item.reasoning) {
-        // Fallback to reasoning if no error object
-        console.log(chalk.red(`  ${item.reasoning}`));
       }
       
       console.log(''); // Empty line between errors
