@@ -14,7 +14,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getPRDiff, getCommitAuthor } from './diff';
+import { getCommitMessage, getPRDiff, getCommitAuthor, getCommitDiff } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -91,8 +91,6 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
  * For regular pushes, HEAD~1...HEAD works without additional fetching.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   const mrIid = process.env.CI_MERGE_REQUEST_IID;
   const targetBranch = process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
 
@@ -108,10 +106,8 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   }
 
   // Any push (main or feature branch): Review last commit only
-  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
-  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
-  const changedFiles = diffSummary.files.map(f => f.file);
-  return { diff: diff || '', changedFiles };
+  // Use shared getCommitDiff (defaults to HEAD)
+  return getCommitDiff(repoRoot);
 }
 
 /**

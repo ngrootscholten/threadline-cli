@@ -90,14 +90,8 @@ export async function getCommitAuthor(
  * - origin/${sourceBranch} doesn't exist until explicitly fetched
  * - HEAD IS the source branch in PR/MR pipelines
  * 
- * Currently used by:
- * - GitLab CI (gitlab.ts)
- * 
- * Future plan:
- * - Azure DevOps will use this when added
- * - Once proven stable in multiple environments, consider migrating
- *   GitHub (github.ts) and Bitbucket (bitbucket.ts) to use this shared
- *   implementation instead of their inline versions.
+ * Used by: GitHub, GitLab, Bitbucket (all PR/MR contexts)
+ * Future: Azure DevOps will use this when added
  * 
  * @param repoRoot - Path to the repository root
  * @param targetBranch - The branch being merged INTO (e.g., "main", "develop")
@@ -137,24 +131,26 @@ export async function getPRDiff(
 }
 
 /**
- * Get diff for a specific commit
+ * Get diff for a specific commit (or HEAD if no SHA provided).
+ * 
+ * Uses `git show` which works reliably with shallow clones (depth=1).
+ * This is safer than `HEAD~1...HEAD` which requires depth >= 2.
+ * 
+ * Used by:
+ * - All CI environments for push/commit context (GitHub, GitLab, Bitbucket, Vercel)
+ * - Local environment for --commit flag
+ * 
+ * @param repoRoot - Path to the repository root
+ * @param sha - Commit SHA to get diff for (defaults to HEAD)
  */
-export async function getCommitDiff(repoRoot: string, sha: string): Promise<GitDiffResult> {
+export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
-  // Check if we're in a git repo
-  const isRepo = await git.checkIsRepo();
-  if (!isRepo) {
-    throw new Error('Not a git repository. Threadline requires a git repository.');
-  }
-
-  // Get diff for the commit
-  // Use git show to get the commit diff
+  // Get diff using git show
   let diff: string;
   let changedFiles: string[];
   
   try {
-    // Get diff using git show
     diff = await git.show([sha, '--format=', '--no-color', '-U200']);
     
     // Get changed files using git show --name-only
@@ -164,17 +160,8 @@ export async function getCommitDiff(repoRoot: string, sha: string): Promise<GitD
       .filter(line => line.trim().length > 0)
       .map(line => line.trim());
   } catch (error: unknown) {
-    // Fallback: try git diff format
-    try {
-      diff = await git.diff([`${sha}^..${sha}`, '-U200']);
-      // Get files from diff summary
-      const diffSummary = await git.diffSummary([`${sha}^..${sha}`]);
-      changedFiles = diffSummary.files.map(f => f.file);
-    } catch (diffError: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const diffErrorMessage = diffError instanceof Error ? diffError.message : 'Unknown error';
-      throw new Error(`Commit ${sha} not found or invalid: ${errorMessage || diffErrorMessage}`);
-    }
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to get diff for commit ${sha}: ${errorMessage}`);
   }
 
   return {

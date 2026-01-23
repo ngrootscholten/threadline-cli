@@ -19,7 +19,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getCommitAuthor } from './diff';
+import { getCommitMessage, getCommitAuthor, getPRDiff, getCommitDiff } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -86,19 +86,17 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
  * Get diff for Bitbucket Pipelines environment
  * 
  * Strategy:
- * - PR context: Fetch destination branch on-demand, compare source vs target (full PR diff)
+ * - PR context: Uses shared getPRDiff() - fetches destination branch, compares against HEAD
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
  * Note: We fetch the destination branch on-demand so this works with shallow clones.
  * Users don't need `depth: full` in their bitbucket-pipelines.yml.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   const prId = process.env.BITBUCKET_PR_ID;
   const prDestinationBranch = process.env.BITBUCKET_PR_DESTINATION_BRANCH;
 
-  // PR Context: Fetch destination branch and compare
+  // PR Context: Use shared getPRDiff() implementation
   if (prId) {
     if (!prDestinationBranch) {
       throw new Error(
@@ -106,23 +104,12 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
         'This should be automatically provided by Bitbucket Pipelines.'
       );
     }
-    
-    // Fetch destination branch on-demand (works with shallow clones)
-    logger.debug(`Fetching destination branch: origin/${prDestinationBranch}`);
-    await git.fetch(['origin', `${prDestinationBranch}:refs/remotes/origin/${prDestinationBranch}`, '--depth=1']);
-    
-    logger.debug(`PR #${prId}, using origin/${prDestinationBranch}...HEAD`);
-    const diff = await git.diff([`origin/${prDestinationBranch}...HEAD`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${prDestinationBranch}...HEAD`]);
-    const changedFiles = diffSummary.files.map(f => f.file);
-    return { diff: diff || '', changedFiles };
+    return getPRDiff(repoRoot, prDestinationBranch, logger);
   }
 
   // Any push (main or feature branch): Review last commit only
-  const diff = await git.diff(['HEAD~1...HEAD', '-U200']);
-  const diffSummary = await git.diffSummary(['HEAD~1...HEAD']);
-  const changedFiles = diffSummary.files.map(f => f.file);
-  return { diff: diff || '', changedFiles };
+  // Use shared getCommitDiff (defaults to HEAD)
+  return getCommitDiff(repoRoot);
 }
 
 /**

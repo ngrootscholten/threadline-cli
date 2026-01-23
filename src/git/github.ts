@@ -14,7 +14,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getCommitAuthor } from './diff';
+import { getCommitMessage, getCommitAuthor, getPRDiff, getCommitDiff } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -92,19 +92,17 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
  * Gets diff for GitHub Actions CI environment
  * 
  * Strategy:
- * - PR context: Fetch base branch on-demand, compare base vs HEAD (full PR diff)
- * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
+ * - PR context: Uses shared getPRDiff() - fetches base branch, compares against HEAD
+ * - Any push (main or feature branch): Compare last commit only using git show HEAD
  * 
  * Note: GitHub Actions does shallow clones by default (fetch-depth: 1), so we fetch
  * the base branch on-demand. HEAD points to the merge commit which contains all PR changes.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   const eventName = process.env.GITHUB_EVENT_NAME;
   const baseRef = process.env.GITHUB_BASE_REF;
 
-  // PR Context: Only pull_request events have GITHUB_BASE_REF set
+  // PR Context: Use shared getPRDiff() implementation
   if (eventName === 'pull_request') {
     if (!baseRef) {
       throw new Error(
@@ -112,43 +110,12 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
         'This should be automatically provided by GitHub Actions.'
       );
     }
-
-    // Fetch base branch on-demand (works with shallow clones)
-    logger.debug(`Fetching base branch: origin/${baseRef}`);
-    try {
-      await git.fetch(['origin', `${baseRef}:refs/remotes/origin/${baseRef}`, '--depth=1']);
-    } catch (fetchError) {
-      throw new Error(
-        `Failed to fetch base branch origin/${baseRef}. ` +
-        `This is required for PR diff comparison. Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
-      );
-    }
-    
-    logger.debug(`PR context, using origin/${baseRef}..HEAD (two dots for direct comparison)`);
-    // Use two dots (..) instead of three dots (...) for direct comparison
-    // Three dots requires finding merge base which can fail with shallow clones
-    // Two dots shows all changes in HEAD that aren't in origin/${baseRef}
-    const diff = await git.diff([`origin/${baseRef}..HEAD`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${baseRef}..HEAD`]);
-    const changedFiles = diffSummary.files.map(f => f.file);
-
-    return {
-      diff: diff || '',
-      changedFiles
-    };
+    return getPRDiff(repoRoot, baseRef, logger);
   }
 
   // Any push (main or feature branch): Review last commit only
-  // Use git show HEAD - works with shallow clones and shows the commit diff
-  const diff = await git.show(['HEAD', '--format=', '--no-color', '-U200']);
-  // Extract changed files from git show
-  const showNameOnly = await git.show(['HEAD', '--name-only', '--format=', '--pretty=format:']);
-  const changedFiles = showNameOnly
-    .split('\n')
-    .filter(line => line.trim().length > 0)
-    .map(line => line.trim());
-  
-  return { diff: diff || '', changedFiles };
+  // Use shared getCommitDiff (defaults to HEAD)
+  return getCommitDiff(repoRoot);
 }
 
 /**

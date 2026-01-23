@@ -13,7 +13,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getCommitAuthor } from './diff';
+import { getCommitMessage, getCommitAuthor, getCommitDiff } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 
@@ -121,27 +121,6 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   };
 }
 
-/**
- * Get diff for a specific commit (when --commit flag is used)
- */
-async function getCommitDiff(repoRoot: string, commitSha: string): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-  
-  // Get diff using git show
-  const diff = await git.show([commitSha, '--format=', '--no-color', '-U200']);
-  
-  // Get changed files using git show --name-only
-  const commitFiles = await git.show([commitSha, '--name-only', '--format=', '--pretty=format:']);
-  const changedFiles = commitFiles
-    .split('\n')
-    .filter(line => line.trim().length > 0)
-    .map(line => line.trim());
-
-  return {
-    diff: diff || '',
-    changedFiles
-  };
-}
 
 /**
  * Gets repository name for local environment

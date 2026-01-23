@@ -13,7 +13,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getCommitAuthor } from './diff';
+import { getCommitMessage, getCommitAuthor, getCommitDiff } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 
@@ -75,35 +75,13 @@ export async function getVercelContext(repoRoot: string): Promise<VercelContext>
 /**
  * Get diff for Vercel CI environment
  * 
- * Vercel provides VERCEL_GIT_COMMIT_SHA which contains the commit being deployed.
- * This function gets the diff for that specific commit using git show.
+ * Vercel only supports commit context (no PRs).
+ * Uses shared getCommitDiff with HEAD (which equals VERCEL_GIT_COMMIT_SHA).
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
-  // Get commit SHA from Vercel environment variable
-  const commitSha = process.env.VERCEL_GIT_COMMIT_SHA;
-  if (!commitSha) {
-    throw new Error(
-      'VERCEL_GIT_COMMIT_SHA environment variable is not set. ' +
-      'This should be automatically provided by Vercel CI.'
-    );
-  }
-
-  // Get diff using git show - this is the ONLY way we get diff in Vercel
-  const diff = await git.show([commitSha, '--format=', '--no-color', '-U200']);
-  
-  // Get changed files using git show --name-only
-  const commitFiles = await git.show([commitSha, '--name-only', '--format=', '--pretty=format:']);
-  const changedFiles = commitFiles
-    .split('\n')
-    .filter(line => line.trim().length > 0)
-    .map(line => line.trim());
-
-  return {
-    diff: diff || '',  // Empty diff is legitimate (e.g., metadata-only commits, merge commits)
-    changedFiles
-  };
+  // Use shared getCommitDiff (defaults to HEAD)
+  // In Vercel, HEAD is the commit being deployed
+  return getCommitDiff(repoRoot);
 }
 
 /**
