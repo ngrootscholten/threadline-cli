@@ -13,8 +13,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage, getCommitAuthor, getCommitDiff } from './diff';
-import { ReviewContext } from '../utils/context';
+import { getCommitMessage, getCommitAuthor, getCommitDiff, getRepoUrl } from './diff';
 import { ReviewContextType } from '../api/client';
 
 export interface LocalContext {
@@ -25,7 +24,6 @@ export interface LocalContext {
   commitMessage?: string;
   commitAuthor: { name: string; email: string };
   prTitle?: string; // Not applicable for local, but included for consistency
-  context: ReviewContext;
   reviewContext: ReviewContextType;
 }
 
@@ -46,9 +44,8 @@ export async function getLocalContext(
 
   // Get all Local context
   const diff = commitSha ? await getCommitDiff(repoRoot, commitSha) : await getDiff(repoRoot);
-  const repoName = await getRepoName(repoRoot);
+  const repoName = await getRepoUrl(repoRoot);  // Shared git command
   const branchName = await getBranchName(repoRoot);
-  const context: ReviewContext = commitSha ? { type: 'commit', commitSha } : { type: 'local' };
   const reviewContext: ReviewContextType = commitSha ? 'commit' : 'local';
   
   // Get commit author (fails loudly if unavailable)
@@ -73,7 +70,6 @@ export async function getLocalContext(
     commitMessage,
     commitAuthor,
     prTitle: undefined, // Not applicable for local
-    context,
     reviewContext
   };
 }
@@ -123,28 +119,8 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
 
 
 /**
- * Gets repository name for local environment
- */
-async function getRepoName(repoRoot: string): Promise<string> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
-  try {
-    const remotes = await git.getRemotes(true);
-    const origin = remotes.find(r => r.name === 'origin');
-    
-    if (!origin || !origin.refs?.fetch) {
-      throw new Error('No origin remote found. Please set up a git remote named "origin".');
-    }
-
-    return origin.refs.fetch;
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(`Failed to get repository name from git remote: ${errorMessage}`);
-  }
-}
-
-/**
  * Gets branch name for local environment
+ * (Uses git command directly - works in local because not in detached HEAD state)
  */
 async function getBranchName(repoRoot: string): Promise<string> {
   const git: SimpleGit = simpleGit(repoRoot);

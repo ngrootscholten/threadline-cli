@@ -4,10 +4,8 @@ import { ReviewAPIClient, ExpertResult, ReviewResponse } from '../api/client';
 import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
 import { ReviewContextType } from '../api/client';
-import { getGitHubContext } from '../git/github';
-import { getGitLabContext } from '../git/gitlab';
-import { getBitbucketContext } from '../git/bitbucket';
-import { getVercelContext } from '../git/vercel';
+import { getCIContext } from '../git/ci-context';
+import { CIEnvironment } from '../git/ci-config';
 import { getLocalContext } from '../git/local';
 import { loadConfig } from '../utils/config-file';
 import { logger } from '../utils/logger';
@@ -19,22 +17,20 @@ import simpleGit from 'simple-git';
 
 /**
  * Helper to get context for any environment.
- * This centralizes the environment switch logic.
+ * CI environments use the unified getCIContext().
+ * Local environment has special handling for flags.
  */
 async function getContextForEnvironment(environment: Environment, repoRoot: string, commitSha?: string) {
   switch (environment) {
-    case 'github':
-      return getGitHubContext(repoRoot);
-    case 'gitlab':
-      return getGitLabContext(repoRoot);
-    case 'bitbucket':
-      return getBitbucketContext(repoRoot);
-    case 'vercel':
-      return getVercelContext(repoRoot);
     case 'local':
       return getLocalContext(repoRoot, commitSha);
+    case 'github':
+    case 'gitlab':
+    case 'bitbucket':
+    case 'vercel':
+      return getCIContext(repoRoot, environment);
     default:
-      // TypeScript exhaustiveness check - should never happen
+      // TypeScript exhaustiveness check - fails at compile time if new Environment added
       throw new Error(`Unrecognized environment: ${environment satisfies never}`);
   }
 }

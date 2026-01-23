@@ -6,6 +6,71 @@ export interface GitDiffResult {
   changedFiles: string[];
 }
 
+// =============================================================================
+// CORE GIT OPERATIONS
+// These functions use raw git commands and work reliably across all CI environments.
+// They are the single source of truth for git information.
+// =============================================================================
+
+/**
+ * Get the repository URL from git remote origin.
+ * 
+ * Uses `git remote get-url origin` which works in all environments,
+ * including shallow clones. This is more reliable than CI-specific
+ * environment variables as it reads directly from git config.
+ * 
+ * @param repoRoot - Path to the repository root
+ * @returns Repository URL (e.g., "https://github.com/user/repo.git")
+ */
+export async function getRepoUrl(repoRoot: string): Promise<string> {
+  try {
+    const url = execSync('git remote get-url origin', {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    
+    if (!url) {
+      throw new Error('Empty URL returned');
+    }
+    
+    return url;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to get repository URL from git remote. ` +
+      `Ensure 'origin' remote is configured. Error: ${message}`
+    );
+  }
+}
+
+/**
+ * Get the current HEAD commit SHA.
+ * 
+ * Uses `git rev-parse HEAD` which works reliably in all environments,
+ * including shallow clones. This is the single source of truth for
+ * the current commit SHA.
+ * 
+ * @param repoRoot - Path to the repository root
+ * @returns Full commit SHA (40 characters)
+ */
+export async function getHeadCommitSha(repoRoot: string): Promise<string> {
+  try {
+    const sha = execSync('git rev-parse HEAD', {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    
+    if (!sha || sha.length !== 40) {
+      throw new Error(`Invalid SHA returned: "${sha}"`);
+    }
+    
+    return sha;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to get HEAD commit SHA: ${message}`);
+  }
+}
+
 /**
  * Get commit message for a specific commit SHA
  * Returns full commit message (subject + body) or null if commit not found
