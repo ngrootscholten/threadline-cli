@@ -217,21 +217,12 @@ async function getCommitAuthorFromConfig(repoRoot: string): Promise<{ name: stri
 
 /**
  * Gets commit author from git log (for specific commits)
+ * getCommitAuthor throws on failure with descriptive error
  */
 async function getCommitAuthorFromGit(
   repoRoot: string,
   commitSha: string
 ): Promise<{ name: string; email: string }> {
-  const gitAuthor = await getCommitAuthor(repoRoot, commitSha);
-  if (!gitAuthor || !gitAuthor.email) {
-    throw new Error(
-      `Local: Failed to get commit author from git log for commit ${commitSha}. ` +
-      'This should be available in your local git repository.'
-    );
-  }
-  return {
-    name: gitAuthor.name,
-    email: gitAuthor.email
-  };
+  return getCommitAuthor(repoRoot, commitSha);
 }
 

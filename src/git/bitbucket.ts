@@ -18,9 +18,8 @@
  */
 
 import simpleGit, { SimpleGit } from 'simple-git';
-import { execSync } from 'child_process';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage } from './diff';
+import { getCommitMessage, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -57,7 +56,8 @@ export async function getBitbucketContext(repoRoot: string): Promise<BitbucketCo
   const reviewContext = detectReviewContext();
   const commitSha = getCommitSha();
   
-  // Get commit author (from git log - Bitbucket doesn't provide this as env var)
+  // Get commit author using shared function (git log)
+  // getCommitAuthor throws on failure with descriptive error
   const commitAuthor = await getCommitAuthor(repoRoot);
   
   // Get commit message if we have a SHA
@@ -212,35 +212,3 @@ function getCommitSha(): string | undefined {
   return process.env.BITBUCKET_COMMIT;
 }
 
-/**
- * Gets commit author for Bitbucket Pipelines
- * 
- * Bitbucket doesn't provide commit author as an environment variable,
- * so we use git log to get it.
- * 
- * This approach is verified by our test script (test-bitbucket-context.ts)
- * which successfully retrieves commit author in all scenarios:
- * - Direct commit to main
- * - Feature branch push
- * - PR pipeline
- * - Merge commit
- */
-async function getCommitAuthor(repoRoot: string): Promise<{ name: string; email: string }> {
-  // Use raw git commands - this is exactly what the test script uses and we know it works
-  try {
-    const name = execSync('git log -1 --format=%an', { encoding: 'utf-8', cwd: repoRoot }).trim();
-    const email = execSync('git log -1 --format=%ae', { encoding: 'utf-8', cwd: repoRoot }).trim();
-    
-    if (!name || !email) {
-      throw new Error('git log returned empty name or email');
-    }
-    
-    return { name, email };
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(
-      `Bitbucket Pipelines: Failed to get commit author from git log. ` +
-      `Error: ${errorMessage}`
-    );
-  }
-}

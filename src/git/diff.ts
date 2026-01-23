@@ -28,37 +28,112 @@ export async function getCommitMessage(repoRoot: string, sha: string): Promise<s
  * 
  * Uses raw git log command to extract author information.
  * Works in all environments where git is available.
+ * 
+ * Throws on error - git commits always have authors, so failure indicates
+ * an invalid SHA or repository issue that should surface immediately.
+ * 
+ * Used by: GitHub, GitLab, Bitbucket, Vercel, Local (all CI environments)
  */
 export async function getCommitAuthor(
   repoRoot: string,
   sha?: string
-): Promise<{ name: string; email: string } | null> {
+): Promise<{ name: string; email: string }> {
+  const commitRef = sha || 'HEAD';
+  
+  let output: string;
   try {
     // Use raw git command (same as test scripts) - more reliable than simple-git API
-    const commitRef = sha || 'HEAD';
     const command = `git log -1 --format="%an <%ae>" ${commitRef}`;
-    const output = execSync(command, { 
+    output = execSync(command, { 
       encoding: 'utf-8', 
       cwd: repoRoot 
     }).trim();
-
-    // Parse output: "Name <email>"
-    const match = output.match(/^(.+?)\s*<(.+?)>$/);
-    if (!match) {
-      return null;
-    }
-
-    const name = match[1].trim();
-    const email = match[2].trim();
-
-    if (!name || !email) {
-      return null;
-    }
-
-    return { name, email };
-  } catch {
-    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to get commit author for ${commitRef}: ${message}`);
   }
+
+  // Parse output: "Name <email>"
+  const match = output.match(/^(.+?)\s*<(.+?)>$/);
+  if (!match) {
+    throw new Error(
+      `Failed to parse commit author for ${commitRef}. ` +
+      `Expected format "Name <email>", got: "${output}"`
+    );
+  }
+
+  const name = match[1].trim();
+  const email = match[2].trim();
+
+  if (!name || !email) {
+    throw new Error(
+      `Commit author for ${commitRef} has empty name or email. ` +
+      `Got name="${name}", email="${email}"`
+    );
+  }
+
+  return { name, email };
+}
+
+/**
+ * Get diff for a PR/MR context in CI environments.
+ * 
+ * This is a shared implementation for CI environments that do shallow clones.
+ * It fetches the target branch on-demand and compares it against HEAD.
+ * 
+ * Strategy:
+ * 1. Fetch target branch: origin/${targetBranch}:refs/remotes/origin/${targetBranch}
+ * 2. Diff: origin/${targetBranch}..HEAD (two dots = direct comparison)
+ * 
+ * Why HEAD instead of origin/${sourceBranch}?
+ * - CI shallow clones only have HEAD available by default
+ * - origin/${sourceBranch} doesn't exist until explicitly fetched
+ * - HEAD IS the source branch in PR/MR pipelines
+ * 
+ * Currently used by:
+ * - GitLab CI (gitlab.ts)
+ * 
+ * Future plan:
+ * - Azure DevOps will use this when added
+ * - Once proven stable in multiple environments, consider migrating
+ *   GitHub (github.ts) and Bitbucket (bitbucket.ts) to use this shared
+ *   implementation instead of their inline versions.
+ * 
+ * @param repoRoot - Path to the repository root
+ * @param targetBranch - The branch being merged INTO (e.g., "main", "develop")
+ * @param logger - Optional logger for debug output
+ */
+export async function getPRDiff(
+  repoRoot: string,
+  targetBranch: string,
+  logger?: { debug: (msg: string) => void }
+): Promise<GitDiffResult> {
+  const git: SimpleGit = simpleGit(repoRoot);
+
+  // Fetch target branch on-demand (works with shallow clones)
+  logger?.debug(`Fetching target branch: origin/${targetBranch}`);
+  try {
+    await git.fetch(['origin', `${targetBranch}:refs/remotes/origin/${targetBranch}`, '--depth=1']);
+  } catch (fetchError) {
+    throw new Error(
+      `Failed to fetch target branch origin/${targetBranch}. ` +
+      `This is required for PR/MR diff comparison. ` +
+      `Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
+    );
+  }
+
+  // Use two dots (..) for direct comparison (same as GitHub)
+  // Two dots: shows all changes in HEAD that aren't in origin/${targetBranch}
+  // Three dots: requires finding merge base which can fail with shallow clones
+  logger?.debug(`Comparing origin/${targetBranch}..HEAD`);
+  const diff = await git.diff([`origin/${targetBranch}..HEAD`, '-U200']);
+  const diffSummary = await git.diffSummary([`origin/${targetBranch}..HEAD`]);
+  const changedFiles = diffSummary.files.map(f => f.file);
+
+  return {
+    diff: diff || '',
+    changedFiles
+  };
 }
 
 /**

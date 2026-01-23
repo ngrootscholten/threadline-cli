@@ -14,7 +14,7 @@
 
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitDiffResult } from '../types/git';
-import { getCommitMessage } from './diff';
+import { getCommitMessage, getPRDiff, getCommitAuthor } from './diff';
 import { ReviewContext } from '../utils/context';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -51,8 +51,9 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
   const reviewContext = detectReviewContext();
   const commitSha = getCommitSha(context);
   
-  // Get commit author (fails loudly if unavailable)
-  const commitAuthor = await getCommitAuthor();
+  // Get commit author using shared function (git log)
+  // getCommitAuthor throws on failure with descriptive error
+  const commitAuthor = await getCommitAuthor(repoRoot);
   
   // Get commit message if we have a SHA
   let commitMessage: string | undefined;
@@ -83,7 +84,7 @@ export async function getGitLabContext(repoRoot: string): Promise<GitLabContext>
  * Get diff for GitLab CI environment
  * 
  * Strategy:
- * - MR context: Fetch target branch, compare source vs target (full MR diff)
+ * - MR context: Uses shared getPRDiff() - fetches target branch, compares against HEAD
  * - Any push (main or feature branch): Compare last commit only (HEAD~1...HEAD)
  * 
  * Note: GitLab CI does a shallow clone, so we fetch the target branch for MR context.
@@ -94,23 +95,16 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
 
   const mrIid = process.env.CI_MERGE_REQUEST_IID;
   const targetBranch = process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
-  const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME;
 
-  // MR Context: Fetch target branch and compare
+  // MR Context: Use shared getPRDiff() implementation
   if (mrIid) {
-    if (!targetBranch || !sourceBranch) {
+    if (!targetBranch) {
       throw new Error(
-        'GitLab MR context detected but CI_MERGE_REQUEST_TARGET_BRANCH_NAME or ' +
-        'CI_MERGE_REQUEST_SOURCE_BRANCH_NAME is missing. ' +
+        'GitLab MR context detected but CI_MERGE_REQUEST_TARGET_BRANCH_NAME is missing. ' +
         'This should be automatically provided by GitLab CI.'
       );
     }
-    logger.debug(`Fetching target branch: origin/${targetBranch}`);
-    await git.fetch(['origin', `${targetBranch}:refs/remotes/origin/${targetBranch}`, '--depth=1']);
-    const diff = await git.diff([`origin/${targetBranch}...origin/${sourceBranch}`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${targetBranch}...origin/${sourceBranch}`]);
-    const changedFiles = diffSummary.files.map(f => f.file);
-    return { diff: diff || '', changedFiles };
+    return getPRDiff(repoRoot, targetBranch, logger);
   }
 
   // Any push (main or feature branch): Review last commit only
@@ -214,34 +208,6 @@ function getCommitSha(context: ReviewContext): string | undefined {
   return undefined;
 }
 
-/**
- * Gets commit author for GitLab CI
- * Uses CI_COMMIT_AUTHOR environment variable (most reliable)
- */
-async function getCommitAuthor(): Promise<{ name: string; email: string }> {
-  const commitAuthor = process.env.CI_COMMIT_AUTHOR;
-  if (!commitAuthor) {
-    throw new Error(
-      'GitLab CI: CI_COMMIT_AUTHOR environment variable is not set. ' +
-      'This should be automatically provided by GitLab CI.'
-    );
-  }
-  
-  // Parse "name <email>" format
-  const match = commitAuthor.match(/^(.+?)\s*<(.+?)>$/);
-  if (!match) {
-    throw new Error(
-      `GitLab CI: CI_COMMIT_AUTHOR format is invalid. ` +
-      `Expected format: "name <email>", got: "${commitAuthor}". ` +
-      `This should be automatically provided by GitLab CI in the correct format.`
-    );
-  }
-  
-  return {
-    name: match[1].trim(),
-    email: match[2].trim()
-  };
-}
 
 /**
  * Gets MR title for GitLab CI

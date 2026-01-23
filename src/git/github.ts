@@ -60,6 +60,7 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   }
   
   // Get commit author using git commands (same approach as Bitbucket/Local)
+  // getCommitAuthor throws on failure with descriptive error
   const commitAuthor = await getCommitAuthor(repoRoot, commitSha);
   
   // Get commit message if we have a SHA
@@ -73,14 +74,6 @@ export async function getGitHubContext(repoRoot: string): Promise<GitHubContext>
   
   // Get PR title if in PR context
   const prTitle = getPRTitle(context);
-
-  // Validate commit author was found
-  if (!commitAuthor) {
-    throw new Error(
-      `GitHub Actions: Failed to get commit author from git log for commit ${commitSha || 'HEAD'}. ` +
-      'This should be automatically available in the git repository.'
-    );
-  }
 
   return {
     diff,
