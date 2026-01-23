@@ -5,7 +5,6 @@ import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
 import { ReviewContextType } from '../api/client';
 import { getCIContext } from '../git/ci-context';
-import { CIEnvironment } from '../git/ci-config';
 import { getLocalContext } from '../git/local';
 import { loadConfig } from '../utils/config-file';
 import { logger } from '../utils/logger';
