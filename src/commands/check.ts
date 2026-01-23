@@ -9,7 +9,6 @@ import { getGitLabContext } from '../git/gitlab';
 import { getBitbucketContext } from '../git/bitbucket';
 import { getVercelContext } from '../git/vercel';
 import { getLocalContext } from '../git/local';
-import { getCommitDiff } from '../git/diff';
 import { loadConfig } from '../utils/config-file';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
@@ -32,8 +31,11 @@ async function getContextForEnvironment(environment: Environment, repoRoot: stri
       return getBitbucketContext(repoRoot);
     case 'vercel':
       return getVercelContext(repoRoot);
-    default:
+    case 'local':
       return getLocalContext(repoRoot, commitSha);
+    default:
+      // TypeScript exhaustiveness check - should never happen
+      throw new Error(`Unrecognized environment: ${environment satisfies never}`);
   }
 }
 
@@ -68,8 +70,9 @@ export async function checkCommand(options: {
       process.exit(1);
     }
     gitRoot = (await git.revparse(['--show-toplevel'])).trim();
-  } catch {
-    logger.error('Failed to get git root. Make sure you are in a git repository.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`Failed to get git root: ${message}`);
     process.exit(1);
   }
 
@@ -111,204 +114,186 @@ export async function checkCommand(options: {
     process.exit(1);
   }
 
-  try {
-    // 1. Find and validate threadlines
-    logger.info('Finding threadlines...');
-    const threadlines = await findThreadlines(cwd, gitRoot);
-    console.log(chalk.green(`✓ Found ${threadlines.length} threadline(s)\n`));
+  // 1. Find and validate threadlines
+  logger.info('Finding threadlines...');
+  const threadlines = await findThreadlines(cwd, gitRoot);
+  console.log(chalk.green(`✓ Found ${threadlines.length} threadline(s)\n`));
 
-    if (threadlines.length === 0) {
-      console.log(chalk.yellow('⚠️  No valid threadlines found.'));
-      console.log(chalk.gray('   Run `npx threadlines init` to create your first threadline.'));
-      process.exit(0);
-    }
+  if (threadlines.length === 0) {
+    console.log(chalk.yellow('⚠️  No valid threadlines found.'));
+    console.log(chalk.gray('   Run `npx threadlines init` to create your first threadline.'));
+    process.exit(0);
+  }
 
-    // 2. Detect environment and context
-    const environment = detectEnvironment();
+  // 2. Detect environment and context
+  const environment = detectEnvironment();
     
-    let gitDiff: { diff: string; changedFiles: string[] };
-    let repoName: string | undefined;
-    let branchName: string | undefined;
-    let reviewContext: ReviewContextType;
-    let metadata: {
-      commitSha?: string;
-      commitMessage?: string;
-      commitAuthorName?: string;
-      commitAuthorEmail?: string;
-      prTitle?: string;
-    } = {};
-    
-    // Check for explicit flags
-    const explicitFlags = [options.commit, options.file, options.folder, options.files].filter(Boolean);
-    
-    // Validate mutually exclusive flags
-    if (explicitFlags.length > 1) {
-      logger.error('Only one review option can be specified at a time');
-      console.log(chalk.gray('   Options: --commit, --file, --folder, --files'));
-      process.exit(1);
-    }
-    
-    // CI environments: auto-detect only, flags are ignored with warning
-    // Local: full flag support for developer flexibility
-    if (isCIEnvironment(environment)) {
-      // Warn if flags are passed in CI - they're meant for local development
-      if (explicitFlags.length > 0) {
-        const flagName = options.commit ? '--commit' : 
-                        options.file ? '--file' : 
-                        options.folder ? '--folder' : '--files';
-        logger.warn(`${flagName} flag ignored in CI environment. Using auto-detection.`);
-      }
-      
-      // CI auto-detect: use environment-specific context
-      const envNames: Record<string, string> = {
-        vercel: 'Vercel',
-        github: 'GitHub Actions',
-        gitlab: 'GitLab CI',
-        bitbucket: 'Bitbucket Pipelines'
-      };
-      logger.info(`Collecting git context for ${envNames[environment]}...`);
-      
-      const envContext = await getContextForEnvironment(environment, repoRoot);
-      gitDiff = envContext.diff;
-      repoName = envContext.repoName;
-      branchName = envContext.branchName;
-      reviewContext = envContext.reviewContext; // Get from CI context
-      metadata = {
-        commitSha: envContext.commitSha,
-        commitMessage: envContext.commitMessage,
-        commitAuthorName: envContext.commitAuthor.name,
-        commitAuthorEmail: envContext.commitAuthor.email,
-        prTitle: envContext.prTitle
-      };
-    } else {
-      // Local environment: support all flags
-      // Detect review context from flags (priority order: file > folder > files > commit > local)
-      if (options.file) {
-        reviewContext = 'file';
-      } else if (options.folder) {
-        reviewContext = 'folder';
-      } else if (options.files && options.files.length > 0) {
-        reviewContext = 'files';
-      } else if (options.commit) {
-        reviewContext = 'commit';
-      } else {
-        reviewContext = 'local';
-      }
-      
-      if (options.file) {
-        logger.info(`Reading file: ${options.file}...`);
-        gitDiff = await getFileContent(repoRoot, options.file);
-      } else if (options.folder) {
-        logger.info(`Reading folder: ${options.folder}...`);
-        gitDiff = await getFolderContent(repoRoot, options.folder);
-      } else if (options.files && options.files.length > 0) {
-        logger.info(`Reading ${options.files.length} file(s)...`);
-        gitDiff = await getMultipleFilesContent(repoRoot, options.files);
-      } else if (options.commit) {
-        logger.info(`Collecting git changes for commit: ${options.commit}...`);
-        gitDiff = await getCommitDiff(repoRoot, options.commit);
-        // Use local context for metadata, passing commit SHA for author lookup
-        const localContext = await getLocalContext(repoRoot, options.commit);
-        repoName = localContext.repoName;
-        branchName = localContext.branchName;
-        metadata = {
-          commitSha: localContext.commitSha,
-          commitMessage: localContext.commitMessage,
-          commitAuthorName: localContext.commitAuthor.name,
-          commitAuthorEmail: localContext.commitAuthor.email
-        };
-      } else {
-        // Local auto-detect: staged/unstaged changes
-        logger.info('Collecting git context for Local...');
-        const localContext = await getLocalContext(repoRoot);
-        gitDiff = localContext.diff;
-        repoName = localContext.repoName;
-        branchName = localContext.branchName;
-        metadata = {
-          commitSha: localContext.commitSha,
-          commitMessage: localContext.commitMessage,
-          commitAuthorName: localContext.commitAuthor.name,
-          commitAuthorEmail: localContext.commitAuthor.email
-        };
-      }
-    }
-    
-    if (gitDiff.changedFiles.length === 0) {
-      console.error(chalk.bold('ℹ️ No changes detected.'));
-      process.exit(0);
-    }
-    
-    // Check for zero diff (files changed but no actual code changes)
-    if (!gitDiff.diff || gitDiff.diff.trim() === '') {
-      console.log(chalk.blue('ℹ️  No code changes detected. Diff contains zero lines added or removed.'));
-      console.log(chalk.gray(`   ${gitDiff.changedFiles.length} file(s) changed but no content modifications detected.`));
-      console.log('');
-      console.log(chalk.bold('Results:\n'));
-      console.log(chalk.gray(`${threadlines.length} threadlines checked`));
-      console.log(chalk.gray(`  ${threadlines.length} not relevant`));
-      console.log('');
-      process.exit(0);
-    }
-    
-    console.log(chalk.green(`✓ Found ${gitDiff.changedFiles.length} changed file(s)\n`));
-
-    // 4. Read context files for each threadline
-    const threadlinesWithContext = threadlines.map(threadline => {
-      const contextContent: Record<string, string> = {};
-      
-      if (threadline.contextFiles) {
-        for (const contextFile of threadline.contextFiles) {
-          const fullPath = path.join(repoRoot, contextFile);
-          if (fs.existsSync(fullPath)) {
-            contextContent[contextFile] = fs.readFileSync(fullPath, 'utf-8');
-          }
-        }
-      }
-
-      return {
-        id: threadline.id,
-        version: threadline.version,
-        patterns: threadline.patterns,
-        content: threadline.content,
-        filePath: threadline.filePath,
-        contextFiles: threadline.contextFiles,
-        contextContent
-      };
-    });
-
-    // 5. Call review API
-    logger.info('Running threadline checks...');
-    const client = new ReviewAPIClient(config.api_url);
-    const response = await client.review({
-      threadlines: threadlinesWithContext,
-      diff: gitDiff.diff,
-      files: gitDiff.changedFiles,
-      apiKey: apiKey!,
-      account: account!,
-      repoName: repoName,
-      branchName: branchName,
-      commitSha: metadata.commitSha,
-      commitMessage: metadata.commitMessage,
-      commitAuthorName: metadata.commitAuthorName,
-      commitAuthorEmail: metadata.commitAuthorEmail,
-      prTitle: metadata.prTitle,
-      environment: environment,
-      cliVersion: CLI_VERSION,
-      reviewContext: reviewContext
-    });
-
-    // 7. Display results (with filtering if --full not specified)
-    displayResults(response, options.full || false);
-
-    // Exit with appropriate code (attention or errors = failure)
-    const hasIssues = response.results.some(r => r.status === 'attention' || r.status === 'error');
-    process.exit(hasIssues ? 1 : 0);
-
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(errorMessage);
+  let gitDiff: { diff: string; changedFiles: string[] };
+  let repoName: string | undefined;
+  let branchName: string | undefined;
+  let reviewContext: ReviewContextType;
+  let metadata: {
+    commitSha?: string;
+    commitMessage?: string;
+    commitAuthorName?: string;
+    commitAuthorEmail?: string;
+    prTitle?: string;
+  } = {};
+  
+  // Check for explicit flags
+  const explicitFlags = [options.commit, options.file, options.folder, options.files].filter(Boolean);
+  
+  // Validate mutually exclusive flags
+  if (explicitFlags.length > 1) {
+    logger.error('Only one review option can be specified at a time');
+    console.log(chalk.gray('   Options: --commit, --file, --folder, --files'));
     process.exit(1);
   }
+  
+  // CI environments: auto-detect only, flags are ignored with warning
+  // Local: full flag support for developer flexibility
+  if (isCIEnvironment(environment)) {
+    // Warn if flags are passed in CI - they're meant for local development
+    if (explicitFlags.length > 0) {
+      const flagName = options.commit ? '--commit' : 
+                      options.file ? '--file' : 
+                      options.folder ? '--folder' : '--files';
+      logger.warn(`${flagName} flag ignored in CI environment. Using auto-detection.`);
+    }
+    
+    // CI auto-detect: use environment-specific context
+    const envNames: Record<string, string> = {
+      vercel: 'Vercel',
+      github: 'GitHub Actions',
+      gitlab: 'GitLab CI',
+      bitbucket: 'Bitbucket Pipelines'
+    };
+    logger.info(`Collecting git context for ${envNames[environment]}...`);
+    
+    const envContext = await getContextForEnvironment(environment, repoRoot);
+    gitDiff = envContext.diff;
+    repoName = envContext.repoName;
+    branchName = envContext.branchName;
+    reviewContext = envContext.reviewContext; // Get from CI context
+    metadata = {
+      commitSha: envContext.commitSha,
+      commitMessage: envContext.commitMessage,
+      commitAuthorName: envContext.commitAuthor.name,
+      commitAuthorEmail: envContext.commitAuthor.email,
+      prTitle: envContext.prTitle
+    };
+  } else {
+    // Local environment: all flags share the same metadata
+    
+    // 1. Get context and metadata (pass commit SHA if provided)
+    logger.info('Collecting local context...');
+    const localContext = await getLocalContext(repoRoot, options.commit);
+    repoName = localContext.repoName;
+    branchName = localContext.branchName;
+    metadata = {
+      commitSha: localContext.commitSha,
+      commitMessage: localContext.commitMessage,
+      commitAuthorName: localContext.commitAuthor.name,
+      commitAuthorEmail: localContext.commitAuthor.email
+    };
+    
+    // 2. Get diff (override with specific content if flag provided)
+    if (options.file) {
+      reviewContext = 'file';
+      logger.info(`Reading file: ${options.file}...`);
+      gitDiff = await getFileContent(repoRoot, options.file);
+    } else if (options.folder) {
+      reviewContext = 'folder';
+      logger.info(`Reading folder: ${options.folder}...`);
+      gitDiff = await getFolderContent(repoRoot, options.folder);
+    } else if (options.files && options.files.length > 0) {
+      reviewContext = 'files';
+      logger.info(`Reading ${options.files.length} file(s)...`);
+      gitDiff = await getMultipleFilesContent(repoRoot, options.files);
+    } else {
+      // Default: use diff from localContext (handles commit and staged/unstaged)
+      reviewContext = options.commit ? 'commit' : 'local';
+      gitDiff = localContext.diff;
+    }
+  }
+  
+  if (gitDiff.changedFiles.length === 0) {
+    console.error(chalk.bold('ℹ️ No changes detected.'));
+    process.exit(0);
+  }
+  
+  // Check for zero diff (files changed but no actual code changes)
+  if (!gitDiff.diff || gitDiff.diff.trim() === '') {
+    console.log(chalk.blue('ℹ️  No code changes detected. Diff contains zero lines added or removed.'));
+    console.log(chalk.gray(`   ${gitDiff.changedFiles.length} file(s) changed but no content modifications detected.`));
+    console.log('');
+    console.log(chalk.bold('Results:\n'));
+    console.log(chalk.gray(`${threadlines.length} threadlines checked`));
+    console.log(chalk.gray(`  ${threadlines.length} not relevant`));
+    console.log('');
+    process.exit(0);
+  }
+  
+  console.log(chalk.green(`✓ Found ${gitDiff.changedFiles.length} changed file(s)\n`));
+  
+  // Log the files being sent
+  for (const file of gitDiff.changedFiles) {
+    logger.info(`  → ${file}`);
+  }
+
+  // 4. Read context files for each threadline
+  const threadlinesWithContext = threadlines.map(threadline => {
+    const contextContent: Record<string, string> = {};
+    
+    if (threadline.contextFiles) {
+      for (const contextFile of threadline.contextFiles) {
+        const fullPath = path.join(repoRoot, contextFile);
+        if (fs.existsSync(fullPath)) {
+          contextContent[contextFile] = fs.readFileSync(fullPath, 'utf-8');
+        } else {
+          throw new Error(`Context file not found for threadline '${threadline.id}': ${contextFile}`);
+        }
+      }
+    }
+
+    return {
+      id: threadline.id,
+      version: threadline.version,
+      patterns: threadline.patterns,
+      content: threadline.content,
+      filePath: threadline.filePath,
+      contextFiles: threadline.contextFiles,
+      contextContent
+    };
+  });
+
+  // 5. Call review API
+  logger.info('Running threadline checks...');
+  const client = new ReviewAPIClient(config.api_url);
+  const response = await client.review({
+    threadlines: threadlinesWithContext,
+    diff: gitDiff.diff,
+    files: gitDiff.changedFiles,
+    apiKey: apiKey!,
+    account: account!,
+    repoName: repoName,
+    branchName: branchName,
+    commitSha: metadata.commitSha,
+    commitMessage: metadata.commitMessage,
+    commitAuthorName: metadata.commitAuthorName,
+    commitAuthorEmail: metadata.commitAuthorEmail,
+    prTitle: metadata.prTitle,
+    environment: environment,
+    cliVersion: CLI_VERSION,
+    reviewContext: reviewContext
+  });
+
+  // 7. Display results (with filtering if --full not specified)
+  displayResults(response, options.full || false);
+
+  // Exit with appropriate code (attention or errors = failure)
+  const hasIssues = response.results.some(r => r.status === 'attention' || r.status === 'error');
+  process.exit(hasIssues ? 1 : 0);
 }
 
 function displayResults(response: ReviewResponse, showFull: boolean) {

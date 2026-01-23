@@ -28,17 +28,20 @@ export async function getFileContent(repoRoot: string, filePath: string): Promis
   // Read file content
   const content = fs.readFileSync(fullPath, 'utf-8');
   
+  // Normalize path to forward slashes for cross-platform consistency (git uses forward slashes)
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  
   // Create artificial diff (all lines as additions)
   const lines = content.split('\n');
   const diff = lines.map((line) => `+${line}`).join('\n');
   
-  // Add diff header
-  const diffHeader = `--- /dev/null\n+++ ${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+  // Add git diff header (matches format expected by server's filterDiffByFiles)
+  const diffHeader = `diff --git a/${normalizedPath} b/${normalizedPath}\n--- /dev/null\n+++ b/${normalizedPath}\n@@ -0,0 +1,${lines.length} @@\n`;
   const fullDiff = diffHeader + diff;
 
   return {
     diff: fullDiff,
-    changedFiles: [filePath]
+    changedFiles: [normalizedPath]
   };
 }
 
@@ -59,8 +62,8 @@ export async function getFolderContent(repoRoot: string, folderPath: string): Pr
     throw new Error(`Path '${folderPath}' is not a folder`);
   }
 
-  // Find all files recursively
-  const pattern = path.join(fullPath, '**', '*');
+  // Find all files recursively (normalize to forward slashes for glob on Windows)
+  const pattern = path.join(fullPath, '**', '*').replace(/\\/g, '/');
   const files = await glob(pattern, {
     cwd: repoRoot,
     absolute: false,
@@ -90,12 +93,15 @@ export async function getFolderContent(repoRoot: string, folderPath: string): Pr
       const content = fs.readFileSync(path.resolve(repoRoot, filePath), 'utf-8');
       const lines = content.split('\n');
       
-      // Create artificial diff for this file
+      // Normalize path to forward slashes for cross-platform consistency
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      
+      // Create artificial diff for this file (git diff format)
       const fileDiff = lines.map((line) => `+${line}`).join('\n');
-      const diffHeader = `--- /dev/null\n+++ ${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+      const diffHeader = `diff --git a/${normalizedPath} b/${normalizedPath}\n--- /dev/null\n+++ b/${normalizedPath}\n@@ -0,0 +1,${lines.length} @@\n`;
       diffs.push(diffHeader + fileDiff);
       
-      changedFiles.push(filePath);
+      changedFiles.push(normalizedPath);
     } catch (error: unknown) {
       // Skip files that can't be read (permissions, etc.)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -138,12 +144,15 @@ export async function getMultipleFilesContent(repoRoot: string, filePaths: strin
     const content = fs.readFileSync(fullPath, 'utf-8');
     const lines = content.split('\n');
     
-    // Create artificial diff for this file
+    // Normalize path to forward slashes for cross-platform consistency
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    
+    // Create artificial diff for this file (git diff format)
     const fileDiff = lines.map((line) => `+${line}`).join('\n');
-    const diffHeader = `--- /dev/null\n+++ ${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+    const diffHeader = `diff --git a/${normalizedPath} b/${normalizedPath}\n--- /dev/null\n+++ b/${normalizedPath}\n@@ -0,0 +1,${lines.length} @@\n`;
     diffs.push(diffHeader + fileDiff);
     
-    changedFiles.push(filePath);
+    changedFiles.push(normalizedPath);
   }
 
   return {
