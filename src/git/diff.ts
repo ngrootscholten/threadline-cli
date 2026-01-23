@@ -22,6 +22,22 @@ export interface GitDiffResult {
  * @param repoRoot - Path to the repository root
  * @returns Repository URL (e.g., "https://github.com/user/repo.git")
  */
+/**
+ * Sanitize a git remote URL by removing embedded credentials.
+ * 
+ * CI environments often embed tokens in the remote URL for authentication:
+ * - GitLab CI: https://gitlab-ci-token:TOKEN@gitlab.com/user/repo
+ * - GitHub Actions: https://x-access-token:TOKEN@github.com/user/repo
+ * 
+ * This function strips credentials to prevent token exposure in logs/UI.
+ */
+function sanitizeRepoUrl(url: string): string {
+  // Handle HTTPS URLs with credentials: https://user:pass@host/path
+  // The regex matches: protocol://anything@host/path and removes "anything@"
+  const sanitized = url.replace(/^(https?:\/\/)([^@]+@)/, '$1');
+  return sanitized;
+}
+
 export async function getRepoUrl(repoRoot: string): Promise<string> {
   try {
     const url = execSync('git remote get-url origin', {
@@ -33,7 +49,8 @@ export async function getRepoUrl(repoRoot: string): Promise<string> {
       throw new Error('Empty URL returned');
     }
     
-    return url;
+    // Remove embedded credentials (CI tokens) from the URL
+    return sanitizeRepoUrl(url);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
