@@ -1,6 +1,6 @@
 {
   "name": "threadlines",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Threadlines CLI - AI-powered linter based on your natural language documentation",
   "main": "dist/index.js",
   "bin": {
