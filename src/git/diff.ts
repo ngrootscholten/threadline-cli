@@ -215,8 +215,13 @@ export async function getPRDiff(
 /**
  * Get diff for a specific commit (or HEAD if no SHA provided).
  * 
- * Uses `git show` which works reliably with shallow clones (depth=1).
- * This is safer than `HEAD~1...HEAD` which requires depth >= 2.
+ * Fetches the parent commit on-demand to ensure git show can generate a proper diff.
+ * This works regardless of CI checkout depth settings (depth=1 or depth=2).
+ * 
+ * Strategy:
+ * 1. Get parent SHA from commit metadata (git show --format=%P)
+ * 2. Fetch parent commit if available (git fetch origin <parentSHA> --depth=1)
+ * 3. Use git show to get diff (now parent is available for comparison)
  * 
  * Used by:
  * - All CI environments for push/commit context (GitHub, GitLab, Bitbucket, Vercel)
@@ -228,7 +233,45 @@ export async function getPRDiff(
 export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Promise<GitDiffResult> {
   const git: SimpleGit = simpleGit(repoRoot);
 
-  // Get diff using git show
+  // Fetch parent commit on-demand to ensure git show can generate a proper diff
+  // This works regardless of CI checkout depth settings (depth=1 or depth=2)
+  // If parent is already available, fetch is fast/no-op; if not, we fetch it
+  
+  // Get parent SHA from commit metadata (works even if parent isn't fetched locally)
+  let parentSha: string;
+  try {
+    parentSha = execSync(`git show ${sha} --format=%P --no-patch`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to get parent commit SHA for ${sha}. ` +
+      `This is required to generate a proper diff. ` +
+      `Error: ${errorMessage}`
+    );
+  }
+  
+  // Fetch parent commit if we have a parent (root commits have no parent)
+  if (parentSha && parentSha.length === 40) {
+    try {
+      // Fetch just this one commit (depth=1 is fine, we only need the parent)
+      await git.fetch(['origin', parentSha, '--depth=1']);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to fetch parent commit ${parentSha} from origin. ` +
+        `This is required to generate a proper diff in shallow clones. ` +
+        `Ensure 'origin' remote is configured and accessible. ` +
+        `Error: ${errorMessage}`
+      );
+    }
+  }
+  // If no parent (root commit), git show will show the full commit content
+  // This is expected behavior for root commits
+
+  // Get diff using git show (now parent should be available)
   let diff: string;
   let changedFiles: string[];
   
