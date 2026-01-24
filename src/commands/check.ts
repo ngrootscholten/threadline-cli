@@ -218,6 +218,15 @@ export async function checkCommand(options: {
     process.exit(0);
   }
   
+  // Safety limit: prevent expensive API calls on large diffs
+  const MAX_CHANGED_FILES = 20;
+  if (gitDiff.changedFiles.length > MAX_CHANGED_FILES) {
+    console.error(chalk.red(`❌ Too many changed files: ${gitDiff.changedFiles.length} (max: ${MAX_CHANGED_FILES})`));
+    console.error(chalk.gray('   This limit prevents expensive API calls on large diffs.'));
+    console.error(chalk.gray('   Consider reviewing smaller batches of changes.'));
+    process.exit(1);
+  }
+  
   // Check for zero diff (files changed but no actual code changes)
   if (!gitDiff.diff || gitDiff.diff.trim() === '') {
     console.log(chalk.blue('ℹ️  No code changes detected. Diff contains zero lines added or removed.'));
