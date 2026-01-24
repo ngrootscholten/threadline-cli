@@ -161,11 +161,22 @@ export async function getCommitAuthor(
  * Get diff for a PR/MR context in CI environments.
  * 
  * This is a shared implementation for CI environments that do shallow clones.
- * It fetches the target branch on-demand and compares it against HEAD.
+ * Uses three-dots logic (merge base) to show only the developer's changes,
+ * avoiding drift from main moving forward.
  * 
  * Strategy:
  * 1. Fetch target branch: origin/${targetBranch}:refs/remotes/origin/${targetBranch}
- * 2. Diff: origin/${targetBranch}..HEAD (two dots = direct comparison)
+ * 2. Find merge base (common ancestor) using git merge-base (plumbing command)
+ * 3. Fetch merge base commit (always fetch, assume not available)
+ * 4. Diff: ${mergeBase}..HEAD (shows only developer's changes, not changes from main)
+ * 
+ * Why three dots (merge base) instead of two dots (direct comparison)?
+ * - Two dots: Shows all differences between target branch tip and HEAD
+ *   - Includes changes that happened in main since branching (drift)
+ *   - Can show files the developer didn't touch
+ * - Three dots: Shows only changes from merge base to HEAD
+ *   - Shows only what the developer actually changed
+ *   - Industry standard for "change detection" in PR/MR reviews
  * 
  * Why HEAD instead of origin/${sourceBranch}?
  * - CI shallow clones only have HEAD available by default
@@ -198,12 +209,47 @@ export async function getPRDiff(
     );
   }
 
-  // Use two dots (..) for direct comparison (same as GitHub)
-  // Two dots: shows all changes in HEAD that aren't in origin/${targetBranch}
-  // Three dots: requires finding merge base which can fail with shallow clones
-  logger?.debug(`Comparing origin/${targetBranch}..HEAD`);
-  const diff = await git.diff([`origin/${targetBranch}..HEAD`, '-U200']);
-  const diffSummary = await git.diffSummary([`origin/${targetBranch}..HEAD`]);
+  // Find merge base (common ancestor) using plumbing command
+  // Three dots logic: compare against merge base to show only developer's changes
+  // This avoids drift from main moving forward (two dots would include those changes)
+  let mergeBase: string;
+  try {
+    mergeBase = execSync(`git merge-base origin/${targetBranch} HEAD`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    
+    if (!mergeBase || mergeBase.length !== 40) {
+      throw new Error(`Invalid merge base SHA: "${mergeBase}"`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to find merge base between origin/${targetBranch} and HEAD. ` +
+      `This is required to show only the developer's changes (avoids drift from main). ` +
+      `Error: ${errorMessage}`
+    );
+  }
+
+  // Always fetch merge base (assume it's not available, fetch is fast/no-op if it is)
+  // This ensures we have the merge base available for diff comparison
+  logger?.debug(`Fetching merge base: ${mergeBase}`);
+  try {
+    await git.fetch(['origin', mergeBase, '--depth=1']);
+  } catch (fetchError) {
+    throw new Error(
+      `Failed to fetch merge base ${mergeBase} from origin. ` +
+      `This is required for PR/MR diff comparison in shallow clones. ` +
+      `Ensure 'origin' remote is configured and accessible. ` +
+      `Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
+    );
+  }
+
+  // Use merge base for diff (three dots logic: shows only developer's changes)
+  // git diff is plumbing command, ignores shallow boundaries
+  logger?.debug(`Comparing ${mergeBase}..HEAD (merge base vs PR branch)`);
+  const diff = await git.diff([`${mergeBase}..HEAD`, '-U200']);
+  const diffSummary = await git.diffSummary([`${mergeBase}..HEAD`]);
   const changedFiles = diffSummary.files.map(f => f.file);
 
   return {
