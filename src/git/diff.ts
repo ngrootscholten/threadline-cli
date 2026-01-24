@@ -219,9 +219,13 @@ export async function getPRDiff(
  * This works regardless of CI checkout depth settings (depth=1 or depth=2).
  * 
  * Strategy:
- * 1. Get parent SHA from commit metadata (git show --format=%P)
- * 2. Fetch parent commit if available (git fetch origin <parentSHA> --depth=1)
- * 3. Use git show to get diff (now parent is available for comparison)
+ * 1. Get parent SHA using plumbing command (git cat-file -p) to read raw commit object
+ *    - Plumbing commands ignore .git/shallow boundaries and show actual parent SHA
+ *    - Porcelain commands (git show) respect shallow boundaries and hide parents in shallow clones
+ *    - This is critical for CI environments that use shallow clones (depth=1)
+ * 2. Parse first parent line (handles standard commits and merge commits)
+ * 3. Fetch parent commit if available (git fetch origin <parentSHA> --depth=1)
+ * 4. Use git show to get diff (now parent is available for comparison)
  * 
  * Used by:
  * - All CI environments for push/commit context (GitHub, GitLab, Bitbucket, Vercel)
@@ -237,13 +241,35 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
   // This works regardless of CI checkout depth settings (depth=1 or depth=2)
   // If parent is already available, fetch is fast/no-op; if not, we fetch it
   
-  // Get parent SHA from commit metadata (works even if parent isn't fetched locally)
+  // Get parent SHA using plumbing command (git cat-file) instead of porcelain (git show)
+  // Plumbing commands ignore .git/shallow boundaries and show the actual parent SHA
+  // Porcelain commands (git show) respect shallow boundaries and hide parents in shallow clones
+  // This is critical for CI environments that use shallow clones (depth=1)
   let parentSha: string;
   try {
-    parentSha = execSync(`git show ${sha} --format=%P --no-patch`, {
+    // Use git cat-file -p to read raw commit object (plumbing command)
+    // This ignores shallow boundaries and shows the actual parent SHA
+    const commitObject = execSync(`git cat-file -p ${sha}`, {
       encoding: 'utf-8',
       cwd: repoRoot
-    }).trim();
+    });
+    
+    // Parse commit object to find first parent line
+    // Standard commits have one parent; merge commits have multiple parents
+    // We use the first parent (standard for diffing against previous state of branch)
+    const lines = commitObject.split('\n');
+    const parentLine = lines.find(line => line.startsWith('parent '));
+    
+    if (!parentLine) {
+      throw new Error(`Commit ${sha} has no parent (it might be the root commit of the repository)`);
+    }
+    
+    // Extract SHA from "parent <sha>" line
+    parentSha = parentLine.split(' ')[1].trim();
+    
+    if (!parentSha || parentSha.length !== 40) {
+      throw new Error(`Invalid parent SHA format: "${parentSha}"`);
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -253,7 +279,7 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
     );
   }
   
-  // Fetch parent commit if we have a parent (root commits have no parent)
+  // Fetch parent commit (root commits have no parent, so this won't execute for them)
   if (parentSha && parentSha.length === 40) {
     try {
       // Fetch just this one commit (depth=1 is fine, we only need the parent)

@@ -239,7 +239,7 @@ export async function checkCommand(options: {
     process.exit(0);
   }
   
-  console.log(chalk.green(`✓ Found ${gitDiff.changedFiles.length} changed file(s)\n`));
+  console.log(chalk.green(`✓ Found ${gitDiff.changedFiles.length} changed file(s) (context: ${reviewContext})\n`));
   
   // Log the files being sent
   for (const file of gitDiff.changedFiles) {
