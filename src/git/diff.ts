@@ -1,5 +1,6 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { execSync } from 'child_process';
+import { logger as globalLogger } from '../utils/logger';
 
 export interface GitDiffResult {
   diff: string;
@@ -162,13 +163,17 @@ export async function getCommitAuthor(
  * 
  * This is a shared implementation for CI environments that do shallow clones.
  * Uses three-dots logic (merge base) to show only the developer's changes,
- * avoiding drift from main moving forward.
+ * with graceful fallback to two dots for shallow clones.
  * 
  * Strategy:
  * 1. Fetch target branch: origin/${targetBranch}:refs/remotes/origin/${targetBranch}
- * 2. Find merge base (common ancestor) using git merge-base (plumbing command)
- * 3. Fetch merge base commit (always fetch, assume not available)
- * 4. Diff: ${mergeBase}..HEAD (shows only developer's changes, not changes from main)
+ * 2. Try three dots: git diff origin/${targetBranch}...HEAD (merge base comparison)
+ *    - Shows only developer's changes (avoids drift from main moving forward)
+ *    - Works when we have enough history (full clones or GitHub's merge commits)
+ * 3. Fallback to two dots: git diff origin/${targetBranch}..HEAD (direct comparison)
+ *    - Used when shallow clone prevents merge base calculation
+ *    - May include drift from main, but provides working diff instead of crashing
+ *    - Warning is logged to inform user of potential drift
  * 
  * Why three dots (merge base) instead of two dots (direct comparison)?
  * - Two dots: Shows all differences between target branch tip and HEAD
@@ -209,48 +214,37 @@ export async function getPRDiff(
     );
   }
 
-  // Find merge base (common ancestor) using plumbing command
-  // Three dots logic: compare against merge base to show only developer's changes
-  // This avoids drift from main moving forward (two dots would include those changes)
-  let mergeBase: string;
+  // Try three dots (merge base) first - shows only developer's changes
+  // Falls back to two dots (direct comparison) if shallow clone prevents merge base calculation
+  let diff: string;
+  let changedFiles: string[];
+  
   try {
-    mergeBase = execSync(`git merge-base origin/${targetBranch} HEAD`, {
-      encoding: 'utf-8',
-      cwd: repoRoot
-    }).trim();
-    
-    if (!mergeBase || mergeBase.length !== 40) {
-      throw new Error(`Invalid merge base SHA: "${mergeBase}"`);
-    }
+    // Step 1: Try the "Perfect" Diff (Three Dots)
+    // This isolates developer changes by comparing against merge base
+    // Works when we have enough history (full clones or GitHub's merge commits)
+    logger?.debug(`Attempting three-dots diff (merge base): origin/${targetBranch}...HEAD`);
+    diff = await git.diff([`origin/${targetBranch}...HEAD`, '-U200']);
+    const diffSummary = await git.diffSummary([`origin/${targetBranch}...HEAD`]);
+    changedFiles = diffSummary.files.map(f => f.file);
   } catch (error) {
+    // Step 2: Fallback to "Risky" Diff (Two Dots)
+    // If three dots fails, it means we're in a shallow clone without enough history
+    // We accept the "two dot" risk (may include drift from main) rather than crashing
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Failed to find merge base between origin/${targetBranch} and HEAD. ` +
-      `This is required to show only the developer's changes (avoids drift from main). ` +
-      `Error: ${errorMessage}`
+    globalLogger.warn(
+      `Shallow clone detected: Cannot calculate merge base. ` +
+      `Diff may include unrelated changes from ${targetBranch} that occurred after branching. ` +
+      `Using direct comparison (two dots) as fallback.`
     );
+    logger?.debug(`Fallback error: ${errorMessage}`);
+    
+    // Use two dots (direct comparison) - shows all differences between tips
+    logger?.debug(`Using two-dots diff (direct comparison): origin/${targetBranch}..HEAD`);
+    diff = await git.diff([`origin/${targetBranch}..HEAD`, '-U200']);
+    const diffSummary = await git.diffSummary([`origin/${targetBranch}..HEAD`]);
+    changedFiles = diffSummary.files.map(f => f.file);
   }
-
-  // Always fetch merge base (assume it's not available, fetch is fast/no-op if it is)
-  // This ensures we have the merge base available for diff comparison
-  logger?.debug(`Fetching merge base: ${mergeBase}`);
-  try {
-    await git.fetch(['origin', mergeBase, '--depth=1']);
-  } catch (fetchError) {
-    throw new Error(
-      `Failed to fetch merge base ${mergeBase} from origin. ` +
-      `This is required for PR/MR diff comparison in shallow clones. ` +
-      `Ensure 'origin' remote is configured and accessible. ` +
-      `Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
-    );
-  }
-
-  // Use merge base for diff (three dots logic: shows only developer's changes)
-  // git diff is plumbing command, ignores shallow boundaries
-  logger?.debug(`Comparing ${mergeBase}..HEAD (merge base vs PR branch)`);
-  const diff = await git.diff([`${mergeBase}..HEAD`, '-U200']);
-  const diffSummary = await git.diffSummary([`${mergeBase}..HEAD`]);
-  const changedFiles = diffSummary.files.map(f => f.file);
 
   return {
     diff: diff || '',
