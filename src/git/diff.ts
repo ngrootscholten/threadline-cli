@@ -215,7 +215,7 @@ export async function getPRDiff(
 /**
  * Get diff for a specific commit (or HEAD if no SHA provided).
  * 
- * Fetches the parent commit on-demand to ensure git show can generate a proper diff.
+ * Uses plumbing commands consistently to work reliably in shallow clones.
  * This works regardless of CI checkout depth settings (depth=1 or depth=2).
  * 
  * Strategy:
@@ -224,8 +224,11 @@ export async function getPRDiff(
  *    - Porcelain commands (git show) respect shallow boundaries and hide parents in shallow clones
  *    - This is critical for CI environments that use shallow clones (depth=1)
  * 2. Parse first parent line (handles standard commits and merge commits)
- * 3. Fetch parent commit if available (git fetch origin <parentSHA> --depth=1)
- * 4. Use git show to get diff (now parent is available for comparison)
+ * 3. Fetch parent commit (git fetch origin <parentSHA> --depth=1)
+ * 4. Use git diff <PARENT_SHA> HEAD to get diff (plumbing command, ignores shallow boundaries)
+ *    - git show HEAD still respects .git/shallow even after fetching parent
+ *    - git diff <PARENT_SHA> HEAD compares tree objects directly, ignoring shallow boundaries
+ *    - This is the key fix: must use plumbing commands consistently, not mix with porcelain
  * 
  * Used by:
  * - All CI environments for push/commit context (GitHub, GitLab, Bitbucket, Vercel)
@@ -265,10 +268,16 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
     }
     
     // Extract SHA from "parent <sha>" line
-    parentSha = parentLine.split(' ')[1].trim();
+    // Format: "parent <40-char-sha>"
+    const parts = parentLine.split(' ');
+    if (parts.length < 2 || !parts[1]) {
+      throw new Error(`Malformed parent line in commit object: "${parentLine}"`);
+    }
+    
+    parentSha = parts[1].trim();
     
     if (!parentSha || parentSha.length !== 40) {
-      throw new Error(`Invalid parent SHA format: "${parentSha}"`);
+      throw new Error(`Invalid parent SHA format: "${parentSha}" (expected 40 characters)`);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -279,37 +288,34 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
     );
   }
   
-  // Fetch parent commit (root commits have no parent, so this won't execute for them)
-  if (parentSha && parentSha.length === 40) {
-    try {
-      // Fetch just this one commit (depth=1 is fine, we only need the parent)
-      await git.fetch(['origin', parentSha, '--depth=1']);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Failed to fetch parent commit ${parentSha} from origin. ` +
-        `This is required to generate a proper diff in shallow clones. ` +
-        `Ensure 'origin' remote is configured and accessible. ` +
-        `Error: ${errorMessage}`
-      );
-    }
+  // Fetch parent commit (we've already validated parentSha is valid above)
+  // If we get here, parentSha is guaranteed to be a valid 40-character SHA
+  try {
+    // Fetch just this one commit (depth=1 is fine, we only need the parent)
+    await git.fetch(['origin', parentSha, '--depth=1']);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to fetch parent commit ${parentSha} from origin. ` +
+      `This is required to generate a proper diff in shallow clones. ` +
+      `Ensure 'origin' remote is configured and accessible. ` +
+      `Error: ${errorMessage}`
+    );
   }
-  // If no parent (root commit), git show will show the full commit content
-  // This is expected behavior for root commits
-
-  // Get diff using git show (now parent should be available)
+  // Get diff using plumbing command (git diff) instead of porcelain (git show)
+  // git show respects .git/shallow boundaries and will still treat HEAD as root commit
+  // git diff <PARENT_SHA> HEAD ignores shallow boundaries and compares tree objects directly
+  // This is critical for shallow clones - we must use plumbing commands consistently
   let diff: string;
   let changedFiles: string[];
   
   try {
-    diff = await git.show([sha, '--format=', '--no-color', '-U200']);
+    // Use git diff to compare parent against HEAD (plumbing command, ignores shallow boundaries)
+    diff = await git.diff([`${parentSha}..${sha}`, '-U200']);
     
-    // Get changed files using git show --name-only
-    const commitFiles = await git.show([sha, '--name-only', '--format=', '--pretty=format:']);
-    changedFiles = commitFiles
-      .split('\n')
-      .filter(line => line.trim().length > 0)
-      .map(line => line.trim());
+    // Get changed files using git diff --name-only
+    const diffSummary = await git.diffSummary([`${parentSha}..${sha}`]);
+    changedFiles = diffSummary.files.map(f => f.file);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to get diff for commit ${sha}: ${errorMessage}`);
