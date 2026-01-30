@@ -51,21 +51,20 @@ export interface OpenAIConfig {
 }
 
 /**
- * Gets OpenAI configuration from environment variables.
+ * Gets OpenAI configuration from environment variables and config file.
  * 
  * Required:
- * - OPENAI_API_KEY: Your OpenAI API key
+ * - OPENAI_API_KEY: Your OpenAI API key (from environment)
  * 
- * Optional (with defaults):
- * - OPENAI_MODEL: Model to use (default: gpt-5.2)
- * - OPENAI_SERVICE_TIER: Service tier (default: Flex)
+ * Model and service tier come from ThreadlineConfig (.threadlinerc file).
+ * Falls back to environment variables if not in config, then to defaults.
  * 
  * Returns undefined if OPENAI_API_KEY is not set.
  * 
  * Note: .env.local is automatically loaded at CLI startup (see index.ts).
  * In CI/CD, environment variables are injected directly into process.env.
  */
-export function getOpenAIConfig(): OpenAIConfig | undefined {
+export function getOpenAIConfig(config?: { openai_model?: string; openai_service_tier?: string }): OpenAIConfig | undefined {
   const apiKey = process.env.OPENAI_API_KEY;
   
   if (!apiKey) {
@@ -75,16 +74,21 @@ export function getOpenAIConfig(): OpenAIConfig | undefined {
   
   logger.debug('OPENAI_API_KEY: found (value hidden for security)');
   
-  const model = process.env.OPENAI_MODEL || OPENAI_MODEL_DEFAULT;
-  const serviceTier = process.env.OPENAI_SERVICE_TIER || OPENAI_SERVICE_TIER_DEFAULT;
+  // Priority: config file > environment variable > default
+  const model = config?.openai_model || process.env.OPENAI_MODEL || OPENAI_MODEL_DEFAULT;
+  const serviceTier = config?.openai_service_tier || process.env.OPENAI_SERVICE_TIER || OPENAI_SERVICE_TIER_DEFAULT;
   
-  if (process.env.OPENAI_MODEL) {
+  if (config?.openai_model) {
+    logger.debug(`OPENAI_MODEL: ${model} (from .threadlinerc)`);
+  } else if (process.env.OPENAI_MODEL) {
     logger.debug(`OPENAI_MODEL: ${model} (from environment)`);
   } else {
     logger.debug(`OPENAI_MODEL: ${model} (using default)`);
   }
   
-  if (process.env.OPENAI_SERVICE_TIER) {
+  if (config?.openai_service_tier) {
+    logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (from .threadlinerc)`);
+  } else if (process.env.OPENAI_SERVICE_TIER) {
     logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (from environment)`);
   } else {
     logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (using default)`);
@@ -102,10 +106,10 @@ export function getOpenAIConfig(): OpenAIConfig | undefined {
  * Call this when starting direct LLM mode to inform the user.
  */
 export function logOpenAIConfig(config: OpenAIConfig): void {
-  console.log(chalk.blue('OpenAI Direct Mode:'));
-  console.log(chalk.gray(`  Model: ${config.model}${config.model === OPENAI_MODEL_DEFAULT ? ' (default)' : ''}`));
-  console.log(chalk.gray(`  Service Tier: ${config.serviceTier}${config.serviceTier === OPENAI_SERVICE_TIER_DEFAULT ? ' (default)' : ''}`));
-  console.log('');
+  logger.output(chalk.blue('OpenAI Direct Mode:'));
+  logger.output(chalk.gray(`  Model: ${config.model}${config.model === OPENAI_MODEL_DEFAULT ? ' (default)' : ''}`));
+  logger.output(chalk.gray(`  Service Tier: ${config.serviceTier}${config.serviceTier === OPENAI_SERVICE_TIER_DEFAULT ? ' (default)' : ''}`));
+  logger.output('');
 }
 
 /**

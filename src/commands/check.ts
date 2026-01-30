@@ -1,13 +1,14 @@
 import { findThreadlines } from '../validators/experts';
 import { getFileContent, getFolderContent, getMultipleFilesContent } from '../git/file';
-import { ReviewAPIClient, ExpertResult, ReviewResponse } from '../api/client';
-import { getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
+import { ExpertResult, ReviewResponse, ReviewAPIClient } from '../api/client';
+import { getOpenAIConfig, logOpenAIConfig, getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
 import { ReviewContextType } from '../api/client';
 import { getCIContext } from '../git/ci-context';
 import { getLocalContext } from '../git/local';
 import { loadConfig } from '../utils/config-file';
 import { logger } from '../utils/logger';
+import { processThreadlines } from '../processors/expert';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
@@ -53,7 +54,7 @@ export async function checkCommand(options: {
   // Load configuration
   const config = await loadConfig(cwd);
   
-  console.log(chalk.blue(`🔍 Threadline CLI v${CLI_VERSION}: Checking code against your threadlines...\n`));
+  logger.info(`🔍 Threadline CLI v${CLI_VERSION}: Checking code against your threadlines...\n`);
   
   // Get git root for consistent file paths across monorepo
   const git = simpleGit(cwd);
@@ -71,53 +72,40 @@ export async function checkCommand(options: {
     process.exit(1);
   }
 
-  // Pre-flight check: Validate ALL required environment variables at once
-  const apiKey = getThreadlineApiKey();
-  const account = getThreadlineAccount();
-  const missingVars: string[] = [];
+  // Pre-flight check: Validate OpenAI API key is set (required for local processing)
+  const openAIConfig = getOpenAIConfig(config);
   
-  // Check for undefined, empty string, or literal unexpanded variable
-  // GitLab CI keeps variables as literal "$VAR" if not defined in CI/CD settings
-  if (!apiKey || apiKey === '$THREADLINE_API_KEY') missingVars.push('THREADLINE_API_KEY');
-  if (!account || account === '$THREADLINE_ACCOUNT') missingVars.push('THREADLINE_ACCOUNT');
-  
-  if (missingVars.length > 0) {
-    logger.error('Missing required environment variables:');
-    for (const varName of missingVars) {
-      logger.error(`   • ${varName}`);
-    }
-    console.log('');
-    console.log(chalk.yellow('To fix this:'));
-    console.log('');
-    console.log(chalk.white('  Local development:'));
-    console.log(chalk.gray('    1. Create a .env.local file in your project root'));
-    console.log(chalk.gray('    2. Add the missing variable(s):'));
-    if (missingVars.includes('THREADLINE_API_KEY')) {
-      console.log(chalk.gray('       THREADLINE_API_KEY=your-api-key-here'));
-    }
-    if (missingVars.includes('THREADLINE_ACCOUNT')) {
-      console.log(chalk.gray('       THREADLINE_ACCOUNT=your-email@example.com'));
-    }
-    console.log(chalk.gray('    3. Make sure .env.local is in your .gitignore'));
-    console.log('');
-    console.log(chalk.white('  CI/CD:'));
-    console.log(chalk.gray('    GitHub Actions:     Settings → Secrets → Add variables'));
-    console.log(chalk.gray('    GitLab CI:          Settings → CI/CD → Variables'));
-    console.log(chalk.gray('    Bitbucket Pipelines: Repository settings → Repository variables'));
-    console.log(chalk.gray('    Vercel:             Settings → Environment Variables'));
-    console.log('');
-    console.log(chalk.gray('Get your credentials at: https://devthreadline.com/settings'));
+  if (!openAIConfig) {
+    logger.error('Missing required environment variable: OPENAI_API_KEY');
+    logger.output('');
+    logger.output(chalk.yellow('To fix this:'));
+    logger.output('');
+    logger.output(chalk.white('  Local development:'));
+    logger.output(chalk.gray('    1. Create a .env.local file in your project root'));
+    logger.output(chalk.gray('    2. Add: OPENAI_API_KEY=your-openai-api-key'));
+    logger.output(chalk.gray('    3. Make sure .env.local is in your .gitignore'));
+    logger.output('');
+    logger.output(chalk.white('  CI/CD:'));
+    logger.output(chalk.gray('    GitHub Actions:     Settings → Secrets → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('    GitLab CI:          Settings → CI/CD → Variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('    Bitbucket Pipelines: Repository settings → Repository variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('    Vercel:             Settings → Environment Variables → Add OPENAI_API_KEY'));
+    logger.output('');
+    logger.output(chalk.gray('Get your OpenAI API key at: https://platform.openai.com/api-keys'));
     process.exit(1);
   }
+  
+  // Log OpenAI configuration
+  logOpenAIConfig(openAIConfig);
 
   // 1. Find and validate threadlines
   logger.info('Finding threadlines...');
   const threadlines = await findThreadlines(cwd, gitRoot);
-  console.log(chalk.green(`✓ Found ${threadlines.length} threadline(s)\n`));
+  logger.info(`✓ Found ${threadlines.length} threadline(s)\n`);
 
   if (threadlines.length === 0) {
-    console.log(chalk.yellow('⚠️  No valid threadlines found.'));
-    console.log(chalk.gray('   Run `npx threadlines init` to create your first threadline.'));
+    logger.warn('No valid threadlines found.');
+    logger.output(chalk.gray('   Run `npx threadlines init` to create your first threadline.'));
     process.exit(0);
   }
 
@@ -142,7 +130,7 @@ export async function checkCommand(options: {
   // Validate mutually exclusive flags
   if (explicitFlags.length > 1) {
     logger.error('Only one review option can be specified at a time');
-    console.log(chalk.gray('   Options: --commit, --file, --folder, --files'));
+    logger.output(chalk.gray('   Options: --commit, --file, --folder, --files'));
     process.exit(1);
   }
   
@@ -214,32 +202,32 @@ export async function checkCommand(options: {
   }
   
   if (gitDiff.changedFiles.length === 0) {
-    console.error(chalk.bold('ℹ️ No changes detected.'));
+    logger.info('ℹ️ No changes detected.');
     process.exit(0);
   }
   
   // Safety limit: prevent expensive API calls on large diffs
   const MAX_CHANGED_FILES = 20;
   if (gitDiff.changedFiles.length > MAX_CHANGED_FILES) {
-    console.error(chalk.red(`❌ Too many changed files: ${gitDiff.changedFiles.length} (max: ${MAX_CHANGED_FILES})`));
-    console.error(chalk.gray('   This limit prevents expensive API calls on large diffs.'));
-    console.error(chalk.gray('   Consider reviewing smaller batches of changes.'));
+    logger.error(`Too many changed files: ${gitDiff.changedFiles.length} (max: ${MAX_CHANGED_FILES})`);
+    logger.output(chalk.gray('   This limit prevents expensive API calls on large diffs.'));
+    logger.output(chalk.gray('   Consider reviewing smaller batches of changes.'));
     process.exit(1);
   }
   
   // Check for zero diff (files changed but no actual code changes)
   if (!gitDiff.diff || gitDiff.diff.trim() === '') {
-    console.log(chalk.blue('ℹ️  No code changes detected. Diff contains zero lines added or removed.'));
-    console.log(chalk.gray(`   ${gitDiff.changedFiles.length} file(s) changed but no content modifications detected.`));
-    console.log('');
-    console.log(chalk.bold('Results:\n'));
-    console.log(chalk.gray(`${threadlines.length} threadlines checked`));
-    console.log(chalk.gray(`  ${threadlines.length} not relevant`));
-    console.log('');
+    logger.info('ℹ️  No code changes detected. Diff contains zero lines added or removed.');
+    logger.output(chalk.gray(`   ${gitDiff.changedFiles.length} file(s) changed but no content modifications detected.`));
+    logger.output('');
+    logger.output(chalk.bold('Results:\n'));
+    logger.output(chalk.gray(`${threadlines.length} threadlines checked`));
+    logger.output(chalk.gray(`  ${threadlines.length} not relevant`));
+    logger.output('');
     process.exit(0);
   }
   
-  console.log(chalk.green(`✓ Found ${gitDiff.changedFiles.length} changed file(s) (context: ${reviewContext})\n`));
+  logger.info(`✓ Found ${gitDiff.changedFiles.length} changed file(s) (context: ${reviewContext})\n`);
   
   // Log the files being sent
   for (const file of gitDiff.changedFiles) {
@@ -277,26 +265,91 @@ export async function checkCommand(options: {
     };
   });
 
-  // 5. Call review API
+  // 5. Process threadlines locally using OpenAI
   logger.info('Running threadline checks...');
-  const client = new ReviewAPIClient(config.api_url);
-  const response = await client.review({
-    threadlines: threadlinesWithContext,
+  const processResponse = await processThreadlines({
+    threadlines: threadlinesWithContext.map(t => ({
+      id: t.id,
+      version: t.version,
+      patterns: t.patterns,
+      content: t.content,
+      contextFiles: t.contextFiles,
+      contextContent: t.contextContent
+    })),
     diff: gitDiff.diff,
     files: gitDiff.changedFiles,
-    apiKey: apiKey!,
-    account: account!,
-    repoName: repoName,
-    branchName: branchName,
-    commitSha: metadata.commitSha,
-    commitMessage: metadata.commitMessage,
-    commitAuthorName: metadata.commitAuthorName,
-    commitAuthorEmail: metadata.commitAuthorEmail,
-    prTitle: metadata.prTitle,
-    environment: environment,
-    cliVersion: CLI_VERSION,
-    reviewContext: reviewContext
+    apiKey: openAIConfig.apiKey,
+    model: openAIConfig.model,
+    serviceTier: openAIConfig.serviceTier,
+    contextLinesForLLM: config.diff_context_lines
   });
+  
+  // Convert ProcessThreadlinesResponse to ReviewResponse format for displayResults
+  const response: ReviewResponse = {
+    results: processResponse.results,
+    metadata: {
+      totalThreadlines: processResponse.metadata.totalThreadlines,
+      completed: processResponse.metadata.completed,
+      timedOut: processResponse.metadata.timedOut,
+      errors: processResponse.metadata.errors
+    }
+  };
+
+  // 6. Sync results to web app (if mode is "online")
+  if (config.mode === 'online') {
+    const apiKey = getThreadlineApiKey();
+    const account = getThreadlineAccount();
+    
+    if (!apiKey || !account) {
+      // Configuration error: mode is "online" but credentials are missing
+      // Fail loudly - this is a user configuration error that needs to be fixed
+      logger.error('Sync mode is "online" but required credentials are missing.');
+      logger.error('Set THREADLINE_API_KEY and THREADLINE_ACCOUNT environment variables to enable syncing.');
+      logger.error('Alternatively, set mode to "offline" in .threadlinerc to disable syncing.');
+      throw new Error(
+        'Sync configuration error: mode is "online" but THREADLINE_API_KEY or THREADLINE_ACCOUNT is not set. ' +
+        'Either set these environment variables or change mode to "offline" in .threadlinerc.'
+      );
+    }
+    
+    // Attempt sync - if it fails, show error but don't fail the check (local processing succeeded)
+    try {
+      logger.info('Syncing results to web app...');
+      const client = new ReviewAPIClient(config.api_url);
+      await client.syncResults({
+        threadlines: threadlinesWithContext,
+        diff: gitDiff.diff,
+        files: gitDiff.changedFiles,
+        results: processResponse.results,
+        metadata: {
+          totalThreadlines: processResponse.metadata.totalThreadlines,
+          completed: processResponse.metadata.completed,
+          timedOut: processResponse.metadata.timedOut,
+          errors: processResponse.metadata.errors,
+          llmModel: processResponse.metadata.llmModel
+        },
+        apiKey,
+        account,
+        repoName,
+        branchName,
+        commitSha: metadata.commitSha,
+        commitMessage: metadata.commitMessage,
+        commitAuthorName: metadata.commitAuthorName,
+        commitAuthorEmail: metadata.commitAuthorEmail,
+        prTitle: metadata.prTitle,
+        environment: environment,
+        cliVersion: CLI_VERSION,
+        reviewContext: reviewContext
+      });
+      logger.info('✓ Results synced successfully');
+    } catch (error) {
+      // Sync API call failed - show error prominently but don't fail the check (local processing succeeded)
+      // This is not a silent fallback: we explicitly show the error and explain why we continue
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logger.error(`Failed to sync results to web app: ${errorMessage}`);
+      logger.warn('Check results are still valid - sync failure does not affect local processing.');
+    }
+  }
 
   // 7. Display results (with filtering if --full not specified)
   displayResults(response, options.full || false);
@@ -316,7 +369,7 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
 
   // Display informational message if present (e.g., zero diffs)
   if (message) {
-    console.log('\n' + chalk.blue('ℹ️  ' + message));
+    logger.output('\n' + chalk.blue('ℹ️  ' + message));
   }
 
   const notRelevant = results.filter((r: ExpertResult) => r.status === 'not_relevant').length;
@@ -348,85 +401,85 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
   // Show success message with breakdown if no issues
   if (attention === 0 && metadata.timedOut === 0 && errors === 0) {
     const summary = summaryParts.length > 0 ? ` (${summaryParts.join(', ')})` : '';
-    console.log('\n' + chalk.green(`✓ Threadline check passed${summary}`));
-    console.log(chalk.gray(`  ${metadata.totalThreadlines} threadline${metadata.totalThreadlines !== 1 ? 's' : ''} checked\n`));
+    logger.output('\n' + chalk.green(`✓ Threadline check passed${summary}`));
+    logger.output(chalk.gray(`  ${metadata.totalThreadlines} threadline${metadata.totalThreadlines !== 1 ? 's' : ''} checked\n`));
   } else {
     // Show detailed breakdown when there are issues
-    console.log('\n' + chalk.bold('Results:\n'));
-    console.log(chalk.gray(`${metadata.totalThreadlines} threadlines checked`));
+    logger.output('\n' + chalk.bold('Results:\n'));
+    logger.output(chalk.gray(`${metadata.totalThreadlines} threadlines checked`));
     
     if (showFull) {
       // Show all results when --full flag is used
       if (notRelevant > 0) {
-        console.log(chalk.gray(`  ${notRelevant} not relevant`));
+        logger.output(chalk.gray(`  ${notRelevant} not relevant`));
       }
       if (compliant > 0) {
-        console.log(chalk.green(`  ${compliant} compliant`));
+        logger.output(chalk.green(`  ${compliant} compliant`));
       }
       if (attention > 0) {
-        console.log(chalk.yellow(`  ${attention} attention`));
+        logger.output(chalk.yellow(`  ${attention} attention`));
       }
     } else {
       // Default: only show attention items
       if (attention > 0) {
-        console.log(chalk.yellow(`  ${attention} attention`));
+        logger.output(chalk.yellow(`  ${attention} attention`));
       }
     }
 
     if (metadata.timedOut > 0) {
-      console.log(chalk.yellow(`  ${metadata.timedOut} timed out`));
+      logger.output(chalk.yellow(`  ${metadata.timedOut} timed out`));
     }
     if (errors > 0) {
-      console.log(chalk.red(`  ${errors} errors`));
+      logger.output(chalk.red(`  ${errors} errors`));
     }
 
-    console.log('');
+    logger.output('');
   }
 
   // Show attention items
   if (attentionItems.length > 0) {
     for (const item of attentionItems) {
-      console.log(chalk.yellow(`[attention] ${item.expertId}`));
+      logger.output(chalk.yellow(`[attention] ${item.expertId}`));
       if (item.fileReferences && item.fileReferences.length > 0) {
         // List all files as bullet points
         for (const fileRef of item.fileReferences) {
           const lineRef = item.lineReferences?.[item.fileReferences.indexOf(fileRef)];
           const lineStr = lineRef ? `:${lineRef}` : '';
-          console.log(chalk.gray(`* ${fileRef}${lineStr}`));
+          logger.output(chalk.gray(`* ${fileRef}${lineStr}`));
         }
       }
       // Show reasoning once at the end (if available)
       if (item.reasoning) {
-        console.log(chalk.gray(item.reasoning));
+        logger.output(chalk.gray(item.reasoning));
       } else if (!item.fileReferences || item.fileReferences.length === 0) {
-        console.log(chalk.gray('Needs attention'));
+        logger.output(chalk.gray('Needs attention'));
       }
-      console.log(''); // Empty line between threadlines
+      logger.output(''); // Empty line between threadlines
     }
   }
 
   // Show error items (always shown, regardless of --full flag)
   if (errorItems.length > 0) {
     for (const item of errorItems) {
-      console.log(chalk.red(`[error] ${item.expertId}`));
+      logger.output(chalk.red(`[error] ${item.expertId}`));
       
       // Show error message
       if (item.error) {
-        console.log(chalk.red(`  Error: ${item.error.message}`));
+        logger.output(chalk.red(`  Error: ${item.error.message}`));
         if (item.error.type) {
-          console.log(chalk.red(`  Type: ${item.error.type}`));
+          logger.output(chalk.red(`  Type: ${item.error.type}`));
         }
         if (item.error.code) {
-          console.log(chalk.red(`  Code: ${item.error.code}`));
+          logger.output(chalk.red(`  Code: ${item.error.code}`));
         }
         // Show raw response for debugging
         if (item.error.rawResponse) {
-          console.log(chalk.gray('  Raw response:'));
-          console.log(chalk.gray(JSON.stringify(item.error.rawResponse, null, 2).split('\n').map(line => '    ' + line).join('\n')));
+          logger.output(chalk.gray('  Raw response:'));
+          logger.output(chalk.gray(JSON.stringify(item.error.rawResponse, null, 2).split('\n').map(line => '    ' + line).join('\n')));
         }
       }
       
-      console.log(''); // Empty line between errors
+      logger.output(''); // Empty line between errors
     }
   }
 }

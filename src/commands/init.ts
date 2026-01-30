@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { logger } from '../utils/logger';
-import { DEFAULT_CONFIG } from '../utils/config-file';
 
 const TEMPLATE = `---
 id: example-threadline
@@ -46,43 +45,53 @@ export async function initCommand() {
     // Create threadlines directory if it doesn't exist
     if (!fs.existsSync(threadlinesDir)) {
       fs.mkdirSync(threadlinesDir, { recursive: true });
-      console.log(chalk.green(`✓ Created /threadlines directory`));
+      logger.output(chalk.green(`✓ Created /threadlines directory`));
     }
 
     // Create .threadlinerc if it doesn't exist
     if (!fs.existsSync(configFile)) {
-      const configContent = JSON.stringify(DEFAULT_CONFIG, null, 2);
+      // Generate config with comment explaining mode
+      const configContent = `{
+  // mode: "online" syncs results to web app (requires THREADLINE_API_KEY and THREADLINE_ACCOUNT)
+  // mode: "offline" processes locally only, no sync
+  "mode": "online",
+  "api_url": "https://devthreadline.com",
+  "openai_model": "gpt-5.2",
+  "openai_service_tier": "Flex",
+  "diff_context_lines": 10
+}`;
       fs.writeFileSync(configFile, configContent, 'utf-8');
-      console.log(chalk.green(`✓ Created .threadlinerc`));
+      logger.output(chalk.green(`✓ Created .threadlinerc`));
     }
 
     // Check if example file already exists
     if (fs.existsSync(exampleFile)) {
-      console.log(chalk.yellow(`⚠️  ${exampleFile} already exists`));
-      console.log(chalk.gray('   Edit it to create your threadline, or delete it and run init again.'));
+      logger.warn(`${exampleFile} already exists`);
+      logger.output(chalk.gray('   Edit it to create your threadline, or delete it and run init again.'));
       return;
     }
 
     // Write template file
     fs.writeFileSync(exampleFile, TEMPLATE, 'utf-8');
     
-    console.log(chalk.green(`✓ Created ${exampleFile}`));
-    console.log('');
-    console.log(chalk.blue('Next steps:'));
-    console.log(chalk.gray('  1. Edit threadlines/example.md with your coding standards'));
-    console.log(chalk.gray('  2. Rename it to something descriptive (e.g., error-handling.md)'));
-    console.log('');
-    console.log(chalk.yellow('⚠️  IMPORTANT: Configuration Required'));
-    console.log(chalk.white('   To use threadlines check, you need:'));
-    console.log('');
-    console.log(chalk.white('   Create a .env.local file in your project root with:'));
-    console.log(chalk.gray('     THREADLINE_API_KEY=your-api-key-here'));
-    console.log(chalk.gray('     THREADLINE_ACCOUNT=your-email@example.com'));
-    console.log('');
-    console.log(chalk.white('   Make sure .env.local is in your .gitignore file!'));
-    console.log('');
-    console.log(chalk.gray('  3. Run: npx threadlines check'));
-    console.log(chalk.gray('     (Use npx --yes threadlines check in non-interactive environments)'));
+    logger.output(chalk.green(`✓ Created ${exampleFile}`));
+    logger.output('');
+    logger.output(chalk.blue('Next steps:'));
+    logger.output(chalk.gray('  1. Edit threadlines/example.md with your coding standards'));
+    logger.output(chalk.gray('  2. Rename it to something descriptive (e.g., error-handling.md)'));
+    logger.output('');
+    logger.output(chalk.yellow('⚠️  IMPORTANT: Configuration Required'));
+    logger.output(chalk.white('   To use threadlines check, you need:'));
+    logger.output('');
+    logger.output(chalk.white('   Create a .env.local file in your project root with:'));
+    logger.output(chalk.gray('     OPENAI_API_KEY=your-openai-api-key'));
+    logger.output(chalk.gray('     THREADLINE_API_KEY=your-api-key-here'));
+    logger.output(chalk.gray('     THREADLINE_ACCOUNT=your-email@example.com'));
+    logger.output('');
+    logger.output(chalk.white('   Make sure .env.local is in your .gitignore file!'));
+    logger.output('');
+    logger.output(chalk.gray('  3. Run: npx threadlines check'));
+    logger.output(chalk.gray('     (Use npx --yes threadlines check in non-interactive environments)'));
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger.error(errorMessage);

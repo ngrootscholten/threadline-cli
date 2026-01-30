@@ -3,6 +3,11 @@ import * as path from 'path';
 import simpleGit from 'simple-git';
 
 export interface ThreadlineConfig {
+  /**
+   * Mode controls whether results are synced to the web app.
+   * - "online": Sync results to web app for analytics and collaboration (requires THREADLINE_API_KEY and THREADLINE_ACCOUNT)
+   * - "offline": Local-only processing, no sync to web app
+   */
   mode: 'online' | 'offline';
   api_url: string;
   openai_model: string;
@@ -11,7 +16,7 @@ export interface ThreadlineConfig {
 }
 
 export const DEFAULT_CONFIG: ThreadlineConfig = {
-  mode: 'online',
+  mode: 'online', // Default: sync enabled. Set to "offline" for local-only processing.
   api_url: 'https://devthreadline.com',
   openai_model: 'gpt-5.2',
   openai_service_tier: 'Flex',
@@ -79,15 +84,28 @@ export async function loadConfig(startDir: string): Promise<ThreadlineConfig> {
 
   // If config file found, parse and merge
   if (configPath) {
+    let configContent = fs.readFileSync(configPath, 'utf-8');
+    
+    // Strip single-line comments (// ...) before parsing JSON
+    // This allows comments in .threadlinerc for documentation
+    // Only match comments at the start of a line (after whitespace) to avoid matching // inside strings
+    // Also remove empty lines left after comment removal
+    configContent = configContent
+      .replace(/^\s*\/\/.*$/gm, '') // Remove comments (only at start of line after whitespace)
+      .replace(/^\s*[\r\n]/gm, ''); // Remove empty lines
+    
     try {
-      const configContent = fs.readFileSync(configPath, 'utf-8');
       const fileConfig = JSON.parse(configContent);
       
       // Merge file config into defaults (file overrides defaults)
       Object.assign(config, fileConfig);
     } catch (error) {
-      // If file exists but can't be parsed, log warning but continue with defaults
-      console.warn(`Warning: Failed to parse .threadlinerc at ${configPath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // If file exists but can't be parsed, fail loudly - this is a user error that needs fixing
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(
+        `Failed to parse .threadlinerc at ${configPath}: ${errorMessage}\n` +
+        `Please fix the syntax error in your .threadlinerc file.`
+      );
     }
   }
 

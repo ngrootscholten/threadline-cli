@@ -53,6 +53,45 @@ export interface ReviewResponse {
   message?: string; // Optional informational message (e.g., for zero diffs)
 }
 
+export interface SyncResultsRequest {
+  threadlines: Array<{
+    id: string;
+    version: string;
+    patterns: string[];
+    content: string;
+    filePath: string;
+    contextFiles?: string[];
+    contextContent?: Record<string, string>;
+  }>;
+  diff: string;
+  files: string[];
+  results: ExpertResult[];
+  metadata: {
+    totalThreadlines: number;
+    completed: number;
+    timedOut: number;
+    errors: number;
+    llmModel?: string;
+  };
+  apiKey: string;
+  account: string;
+  repoName?: string;
+  branchName?: string;
+  commitSha?: string;
+  commitMessage?: string;
+  commitAuthorName?: string;
+  commitAuthorEmail?: string;
+  prTitle?: string;
+  environment?: string;
+  cliVersion?: string;
+  reviewContext: ReviewContextType;
+}
+
+export interface SyncResultsResponse {
+  success: boolean;
+  checkId?: string;
+}
+
 export class ReviewAPIClient {
   private client: AxiosInstance;
 
@@ -70,6 +109,11 @@ export class ReviewAPIClient {
 
   async review(request: ReviewRequest): Promise<ReviewResponse> {
     const response = await this.client.post<ReviewResponse>('/api/threadline-check', request);
+    return response.data;
+  }
+
+  async syncResults(request: SyncResultsRequest): Promise<SyncResultsResponse> {
+    const response = await this.client.post<SyncResultsResponse>('/api/threadline-check-results', request);
     return response.data;
   }
 }

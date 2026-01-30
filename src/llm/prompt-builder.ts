@@ -27,7 +27,8 @@ export function buildPrompt(
 
   return `You are a code quality checker focused EXCLUSIVELY on: ${threadline.id}
 
-CRITICAL: You must ONLY check for violations of THIS SPECIFIC threadline. Do NOT flag other code quality issues, style problems, or unrelated concerns. If the code does not violate THIS threadline's specific rules, return "compliant" even if other issues exist.
+CRITICAL: You must ONLY check for violations of THIS SPECIFIC threadline. Do NOT flag other code quality issues, style problems, or unrelated concerns. 
+If the code does not violate THIS threadline's specific rules, return "compliant" even if other issues exist.
 
 Threadline Guidelines:
 ${threadline.content}
@@ -40,32 +41,20 @@ ${matchingFiles.join('\n')}
 
 Review the code changes AGAINST ONLY THE THREADLINE GUIDELINES ABOVE.
 
-YOUR OBJECTIVE:
-Your job is twofold:
+YOUR OBJECTIVES:
 1. Detect new violations being introduced in the code changes
 2. Review whether engineers have successfully addressed earlier violations
 
 This is why it's important to look very carefully at the diff structure. You'll come across diffs that introduce new violations. You will also come across some that address earlier violations. The diff structure should allow you to tell which is which, because lines starting with '-' are removed in favour of lines with '+'.
 
-When analyzing the diff:
-- Lines starting with "+" represent NEW code being added - violations here are NEW violations that need attention
-- Lines starting with "-" represent code being REMOVED - if this removed code contained violations, the engineer is fixing them
-- Each file section starts with "diff --git a/path/to/file b/path/to/file" - use this to identify which file each violation belongs to
-- File sections contain "@@ -start,count +start,count @@" headers indicating line ranges - line numbers after the "+" refer to the NEW file
-- If you see a violation in a "+" line, that's a new violation being introduced
-- If you see a violation only in "-" lines (being removed), that's a fix - the engineer is addressing the violation
-- If both "+" and "-" lines contain violations, the new violations in "+" lines take priority (the fix isn't complete)
-- Some violations may not be line-specific (e.g., file-level patterns, overall structure) - include those in your reasoning as well
+CRITICAL CHECK BEFORE FLAGGING VIOLATIONS:
+Before commenting on or flagging a violation in any line, look at the FIRST CHARACTER of that line:
+* If it's a "-", the code is deleted.
+  → Only flag violations in lines starting with "+" (new code being added)
+* If the first character is "+", this is NEW code being added - flag violations here if they violate the threadline
+* If the line doesn't start with "+" or "-" (context lines), these are UNCHANGED - do NOT flag violations here
+* Some violations may not be line-specific (e.g., file-level patterns, overall structure) - include those in your reasoning as well
 
-CONCRETE EXAMPLES:
-Example 1: "+ const fruit = 'banana';" (threadline forbids "banana")
-→ This is NEW code introducing a violation → return "attention"
-
-Example 2: "- const fruit = 'banana';" (threadline forbids "banana")
-→ This is code being REMOVED that contained a violation → the engineer is fixing it → return "compliant"
-
-Example 3: "+ const fruit = 'banana';" AND "- const fruit = 'apple';"
-→ The addition introduces a new violation → return "attention" (the removal doesn't matter if new violations are introduced)
 
 IMPORTANT:
 - Only flag violations of the specific rules defined in this threadline

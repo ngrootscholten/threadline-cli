@@ -1,4 +1,6 @@
 {
+  // mode: "online" syncs results to web app (requires THREADLINE_API_KEY and THREADLINE_ACCOUNT)
+  // mode: "offline" processes locally only, no sync
   "mode": "online",
   "api_url": "http://localhost:3000",
   "openai_model": "gpt-5.2",

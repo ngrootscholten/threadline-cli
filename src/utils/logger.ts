@@ -22,7 +22,9 @@ export function isDebugEnabled(): boolean {
 /**
  * Logger utility for CLI output
  * 
- * - debug/info: Only shown when --debug flag is set
+ * - debug: Only shown when --debug flag is set (technical details)
+ * - info: Always shown (important status messages)
+ * - output: Always shown (formatted output, no prefix)
  * - warn/error: Always shown (critical information)
  */
 export const logger = {
@@ -37,13 +39,19 @@ export const logger = {
   },
 
   /**
-   * Info-level log (what's happening, progress updates)
-   * Only shown with --debug flag
+   * Info-level log (important status messages, progress updates)
+   * Always shown (important information users need to see)
    */
   info: (message: string): void => {
-    if (debugEnabled) {
-      console.log(chalk.blue(`[INFO] ${message}`));
-    }
+    console.log(chalk.blue(`[INFO] ${message}`));
+  },
+
+  /**
+   * Output formatted text (for structured output like results display)
+   * Always shown, no prefix (for custom formatting)
+   */
+  output: (message: string): void => {
+    console.log(message);
   },
 
   /**
