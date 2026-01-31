@@ -1,10 +1,6 @@
 import chalk from 'chalk';
 import { logger } from './logger';
 
-// Default values for OpenAI configuration
-const OPENAI_MODEL_DEFAULT = 'gpt-5.2';
-const OPENAI_SERVICE_TIER_DEFAULT = 'Flex';
-
 /**
  * Gets THREADLINE_API_KEY from environment.
  * 
@@ -54,15 +50,19 @@ export interface OpenAIConfig {
  * Gets OpenAI configuration from environment variables and config file.
  * 
  * Required:
- * - OPENAI_API_KEY: Your OpenAI API key (from environment)
- * 
- * Model and service tier come from ThreadlineConfig (.threadlinerc file).
- * Falls back to environment variables if not in config, then to defaults.
+ * - OPENAI_API_KEY: Your OpenAI API key (from environment - secret)
+ * - openai_model: Model name (from .threadlinerc - required)
+ * - openai_service_tier: Service tier (from .threadlinerc - required)
  * 
  * Returns undefined if OPENAI_API_KEY is not set.
+ * Throws an error if model or service tier are missing from .threadlinerc.
  * 
  * Note: .env.local is automatically loaded at CLI startup (see index.ts).
  * In CI/CD, environment variables are injected directly into process.env.
+ * 
+ * Configuration philosophy:
+ * - Secrets (API keys) -> environment variables
+ * - Config (model, service tier) -> .threadlinerc file (required, no fallbacks)
  */
 export function getOpenAIConfig(config?: { openai_model?: string; openai_service_tier?: string }): OpenAIConfig | undefined {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -74,30 +74,28 @@ export function getOpenAIConfig(config?: { openai_model?: string; openai_service
   
   logger.debug('OPENAI_API_KEY: found (value hidden for security)');
   
-  // Priority: config file > environment variable > default
-  const model = config?.openai_model || process.env.OPENAI_MODEL || OPENAI_MODEL_DEFAULT;
-  const serviceTier = config?.openai_service_tier || process.env.OPENAI_SERVICE_TIER || OPENAI_SERVICE_TIER_DEFAULT;
-  
-  if (config?.openai_model) {
-    logger.debug(`OPENAI_MODEL: ${model} (from .threadlinerc)`);
-  } else if (process.env.OPENAI_MODEL) {
-    logger.debug(`OPENAI_MODEL: ${model} (from environment)`);
-  } else {
-    logger.debug(`OPENAI_MODEL: ${model} (using default)`);
+  // Require config values from .threadlinerc - no fallbacks
+  if (!config?.openai_model) {
+    throw new Error(
+      'Missing required configuration: openai_model must be set in .threadlinerc file.\n' +
+      'Add "openai_model": "gpt-5.2" (or your preferred model) to your .threadlinerc file.'
+    );
   }
   
-  if (config?.openai_service_tier) {
-    logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (from .threadlinerc)`);
-  } else if (process.env.OPENAI_SERVICE_TIER) {
-    logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (from environment)`);
-  } else {
-    logger.debug(`OPENAI_SERVICE_TIER: ${serviceTier} (using default)`);
+  if (!config?.openai_service_tier) {
+    throw new Error(
+      'Missing required configuration: openai_service_tier must be set in .threadlinerc file.\n' +
+      'Add "openai_service_tier": "Flex" (or your preferred tier) to your .threadlinerc file.'
+    );
   }
+  
+  logger.debug(`OPENAI_MODEL: ${config.openai_model} (from .threadlinerc)`);
+  logger.debug(`OPENAI_SERVICE_TIER: ${config.openai_service_tier} (from .threadlinerc)`);
   
   return {
     apiKey,
-    model,
-    serviceTier
+    model: config.openai_model,
+    serviceTier: config.openai_service_tier
   };
 }
 
@@ -107,8 +105,86 @@ export function getOpenAIConfig(config?: { openai_model?: string; openai_service
  */
 export function logOpenAIConfig(config: OpenAIConfig): void {
   logger.output(chalk.blue('OpenAI Direct Mode:'));
-  logger.output(chalk.gray(`  Model: ${config.model}${config.model === OPENAI_MODEL_DEFAULT ? ' (default)' : ''}`));
-  logger.output(chalk.gray(`  Service Tier: ${config.serviceTier}${config.serviceTier === OPENAI_SERVICE_TIER_DEFAULT ? ' (default)' : ''}`));
+  logger.output(chalk.gray(`  Model: ${config.model}`));
+  logger.output(chalk.gray(`  Service Tier: ${config.serviceTier}`));
+  logger.output('');
+}
+
+/**
+ * Bedrock configuration for direct LLM calls
+ */
+export interface BedrockConfig {
+  accessKeyId: string;
+  secretAccessKey: string;
+  model: string;
+  region: string;
+}
+
+/**
+ * Gets Bedrock configuration from environment variables and config file.
+ * 
+ * Required:
+ * - BEDROCK_ACCESS_KEY_ID: Your AWS access key ID (from environment - secret)
+ * - BEDROCK_SECRET_ACCESS_KEY: Your AWS secret access key (from environment - secret)
+ * - bedrock_model: Model name (from .threadlinerc - required)
+ * - bedrock_region: AWS region (from .threadlinerc - required)
+ * 
+ * Returns undefined if BEDROCK_ACCESS_KEY_ID or BEDROCK_SECRET_ACCESS_KEY is not set.
+ * Throws an error if model or region are missing from .threadlinerc.
+ * 
+ * Note: .env.local is automatically loaded at CLI startup (see index.ts).
+ * In CI/CD, environment variables are injected directly into process.env.
+ * 
+ * Configuration philosophy:
+ * - Secrets (access keys) -> environment variables
+ * - Config (model, region) -> .threadlinerc file (required, no fallbacks)
+ */
+export function getBedrockConfig(config?: { bedrock_model?: string; bedrock_region?: string }): BedrockConfig | undefined {
+  const accessKeyId = process.env.BEDROCK_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.BEDROCK_SECRET_ACCESS_KEY;
+  
+  if (!accessKeyId || !secretAccessKey) {
+    logger.debug('BEDROCK_ACCESS_KEY_ID or BEDROCK_SECRET_ACCESS_KEY: not set (Bedrock mode unavailable)');
+    return undefined;
+  }
+  
+  logger.debug('BEDROCK_ACCESS_KEY_ID: found (value hidden for security)');
+  logger.debug('BEDROCK_SECRET_ACCESS_KEY: found (value hidden for security)');
+  
+  // Require config values from .threadlinerc - no fallbacks
+  if (!config?.bedrock_model) {
+    throw new Error(
+      'Missing required configuration: bedrock_model must be set in .threadlinerc file.\n' +
+      'Add "bedrock_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0" (or your preferred model) to your .threadlinerc file.'
+    );
+  }
+  
+  if (!config?.bedrock_region) {
+    throw new Error(
+      'Missing required configuration: bedrock_region must be set in .threadlinerc file.\n' +
+      'Add "bedrock_region": "us-east-1" (or your preferred AWS region) to your .threadlinerc file.'
+    );
+  }
+  
+  logger.debug(`BEDROCK_MODEL: ${config.bedrock_model} (from .threadlinerc)`);
+  logger.debug(`BEDROCK_REGION: ${config.bedrock_region} (from .threadlinerc)`);
+  
+  return {
+    accessKeyId,
+    secretAccessKey,
+    model: config.bedrock_model,
+    region: config.bedrock_region
+  };
+}
+
+/**
+ * Logs the Bedrock configuration being used.
+ * Call this when starting Bedrock mode to inform the user.
+ */
+export function logBedrockConfig(config: BedrockConfig): void {
+  logger.output(chalk.blue('Amazon Bedrock Direct Mode:'));
+  logger.output(chalk.gray(`  Model: ${config.model}`));
+  logger.output(chalk.gray(`  Region: ${config.region}`));
   logger.output('');
 }
 

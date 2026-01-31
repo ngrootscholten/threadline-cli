@@ -27,9 +27,18 @@ export async function processThreadline(
   threadline: ThreadlineInput,
   diff: string,
   files: string[],
-  apiKey: string,
-  model: string,
-  serviceTier: string,
+  provider: 'bedrock' | 'openai',
+  bedrockConfig: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    model: string;
+    region: string;
+  } | undefined,
+  openaiConfig: {
+    apiKey: string;
+    model: string;
+    serviceTier: string;
+  } | undefined,
   contextLinesForLLM: number
 ): Promise<ProcessThreadlineResult> {
 
@@ -76,8 +85,9 @@ export async function processThreadline(
   // Build prompt with trimmed diff (full filtered diff is still stored for UI)
   const prompt = buildPrompt(threadline, trimmedDiffForLLM, filesInFilteredDiff);
   
+  const modelName = provider === 'bedrock' ? bedrockConfig?.model : openaiConfig?.model;
   logger.debug(`   📝 Processing ${threadline.id}: ${relevantFiles.length} relevant files, ${filesInFilteredDiff.length} files in filtered diff`);
-  logger.debug(`   🤖 Calling LLM (${model}) for ${threadline.id}...`);
+  logger.debug(`   🤖 Calling LLM (${provider}, ${modelName}) for ${threadline.id}...`);
   
   // Capture timing for LLM call
   const llmCallStartedAt = new Date().toISOString();
@@ -88,141 +98,25 @@ export async function processThreadline(
   let llmCallErrorMessage: string | null = null;
 
   try {
-    // Build request body for OpenAI API (direct HTTP call - zero dependencies)
-    const requestBody: {
-      model: string;
-      messages: Array<{ role: 'system' | 'user'; content: string }>;
-      response_format: { type: 'json_object' };
-      temperature: number;
-      service_tier?: 'auto' | 'default' | 'flex';
-    } = {
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a code quality checker. Analyze code changes against the threadline guidelines. Be precise - only flag actual violations. Return only valid JSON, no other text.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1
-    };
+    let actualModel: string | undefined;
+    let content: string;
 
-    // Add service_tier if not 'standard'
-    const normalizedServiceTier = serviceTier.toLowerCase();
-    if (normalizedServiceTier !== 'standard' && (normalizedServiceTier === 'auto' || normalizedServiceTier === 'default' || normalizedServiceTier === 'flex')) {
-      requestBody.service_tier = normalizedServiceTier as 'auto' | 'default' | 'flex';
+    if (provider === 'bedrock' && bedrockConfig) {
+      const bedrockResult = await callBedrockAPI(bedrockConfig, prompt);
+      actualModel = bedrockResult.model;
+      content = bedrockResult.content;
+      llmCallTokens = bedrockResult.tokens;
+    } else if (provider === 'openai' && openaiConfig) {
+      const openaiResult = await callOpenAIAPI(openaiConfig, prompt);
+      actualModel = openaiResult.model;
+      content = openaiResult.content;
+      llmCallTokens = openaiResult.tokens;
+    } else {
+      throw new Error(`Invalid provider configuration: ${provider}`);
     }
-
-    // Direct HTTP call to OpenAI API (native fetch - zero dependencies)
-    // Use AbortController for timeout (higher-level timeout in expert.ts is 40s, use 45s here as safety margin)
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
-    
-    let httpResponse: Response;
-    try {
-      httpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-    } catch (fetchError: unknown) {
-      clearTimeout(timeoutId);
-      // Handle AbortError from timeout
-      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        throw new Error('Request timeout');
-      }
-      throw fetchError;
-    }
-
-    if (!httpResponse.ok) {
-      const errorText = await httpResponse.text();
-      let errorMessage = `HTTP ${httpResponse.status}: ${errorText}`;
-      
-      // Try to parse OpenAI error structure
-      try {
-        const errorData = JSON.parse(errorText) as {
-          error?: {
-            message?: string;
-            type?: string;
-            code?: string;
-            param?: string;
-          };
-        };
-        if (errorData.error) {
-          errorMessage = errorData.error.message || errorText;
-          // Create error object matching SDK error structure for compatibility
-          const errorObj = new Error(errorMessage) as Error & {
-            status?: number;
-            error?: {
-              type?: string;
-              code?: string;
-              param?: string;
-            };
-          };
-          errorObj.status = httpResponse.status;
-          errorObj.error = {
-            type: errorData.error.type,
-            code: errorData.error.code,
-            param: errorData.error.param,
-          };
-          throw errorObj;
-        }
-      } catch (parseError: unknown) {
-        // If it's already our structured error, re-throw it
-        const structuredError = parseError as Error & { status?: number };
-        if (structuredError.status) {
-          throw parseError;
-        }
-        // Otherwise create a basic error
-        throw new Error(errorMessage);
-      }
-    }
-
-    const response = await httpResponse.json() as {
-      id?: string;
-      model?: string;
-      choices?: Array<{
-        message?: {
-          role?: string;
-          content?: string;
-        };
-        finish_reason?: string;
-      }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-      };
-    };
-
-    // Capture the actual model returned by OpenAI (may differ from requested)
-    const actualModel = response.model;
 
     llmCallFinishedAt = new Date().toISOString();
     llmCallResponseTimeMs = new Date(llmCallFinishedAt).getTime() - new Date(llmCallStartedAt).getTime();
-    
-    // Capture token usage if available
-    if (response.usage) {
-      llmCallTokens = {
-        prompt_tokens: response.usage.prompt_tokens || 0,
-        completion_tokens: response.usage.completion_tokens || 0,
-        total_tokens: response.usage.total_tokens || 0
-      };
-    }
-
-    const content = response.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from LLM');
-    }
     
     const parsed = JSON.parse(content);
     
@@ -280,9 +174,9 @@ export async function processThreadline(
     llmCallErrorMessage = errorMessage;
     
     // Log full error for debugging
-    logger.error(`   ❌ OpenAI error: ${JSON.stringify(error, null, 2)}`);
+    logger.error(`   ❌ ${provider.toUpperCase()} error: ${JSON.stringify(error, null, 2)}`);
     
-    // Extract OpenAI error details from the error object
+    // Extract error details from the error object
     // Handle both SDK-style errors and HTTP errors
     const errorObj = error as {
       error?: { type?: string; code?: string; param?: string; message?: string };
@@ -294,7 +188,7 @@ export async function processThreadline(
       type?: string;
       message?: string;
     };
-    const openAIError = errorObj?.error || {};
+    const apiError = errorObj?.error || {};
     const rawErrorResponse = {
       status: errorObj?.status,
       headers: errorObj?.headers,
@@ -319,8 +213,8 @@ export async function processThreadline(
       reasoning: `Error: ${errorMessage}`,
       error: {
         message: errorMessage,
-        type: openAIError?.type || errorObj?.type,
-        code: openAIError?.code || errorObj?.code,
+        type: apiError?.type || errorObj?.type,
+        code: apiError?.code || errorObj?.code,
         rawResponse: rawErrorResponse
       },
       fileReferences: [],
@@ -337,6 +231,403 @@ export async function processThreadline(
       }
     };
   }
+}
+
+// Interface for aws4 request options
+interface Aws4RequestOptions {
+  hostname: string;
+  path: string;
+  method: string;
+  service: string;
+  region: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+// Type for aws4 module
+interface Aws4Module {
+  sign: (request: Aws4RequestOptions, credentials: { accessKeyId: string; secretAccessKey: string }) => void;
+}
+
+async function callBedrockAPI(
+  config: { accessKeyId: string; secretAccessKey: string; model: string; region: string },
+  prompt: string
+): Promise<{ model: string; content: string; tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null }> {
+  // Dynamic import - only loads aws4 when Bedrock is configured
+  // aws4 is a required dependency, so it should always be available
+  const aws4Module = await import('aws4' as string) as { default?: Aws4Module } & Aws4Module;
+  const aws4: Aws4Module = aws4Module.default || aws4Module;
+
+  // Define JSON schema for structured output via Tool Use
+  // This ensures Claude returns properly structured JSON without markdown wrapping
+  const toolSchema = {
+    type: 'object' as const,
+    properties: {
+      status: {
+        type: 'string' as const,
+        enum: ['compliant', 'attention', 'not_relevant'],
+      },
+      reasoning: {
+        type: 'string' as const,
+      },
+      file_references: {
+        type: 'array' as const,
+        items: {
+          type: 'string' as const,
+        },
+      },
+    },
+    required: ['status', 'reasoning', 'file_references'],
+  };
+
+  // System message focused on analysis, not JSON format (tool enforces structure)
+  const systemMessage = 'You are a code quality checker. Analyze code changes against the threadline guidelines. Be precise - only flag actual violations.';
+
+  logger.debug(`   🔧 Bedrock: Using Tool Use for structured JSON output`);
+
+  // Prepare the Converse API request body with Tool Use configuration
+  const body = JSON.stringify({
+    modelId: config.model,
+    system: [
+      {
+        text: systemMessage,
+      },
+    ],
+    messages: [
+      {
+        role: 'user' as const,
+        content: [{ text: prompt }],
+      },
+    ],
+    toolConfig: {
+      tools: [
+        {
+          toolSpec: {
+            name: 'return_analysis_result',
+            description: 'Returns the code quality analysis result as structured JSON',
+            inputSchema: {
+              json: toolSchema,
+            },
+          },
+        },
+      ],
+    },
+    toolChoice: {
+      type: 'tool' as const,
+      tool: {
+        name: 'return_analysis_result',
+      },
+    },
+    inferenceConfig: {
+      maxTokens: 4000, // Match OpenAI's typical max
+    },
+  });
+
+  // Prepare request options for aws4 signing
+  // Bedrock Converse API endpoint: POST /model/{modelId}/converse
+  const requestOptions: Aws4RequestOptions = {
+    hostname: `bedrock-runtime.${config.region}.amazonaws.com`,
+    path: `/model/${config.model}/converse`,
+    method: 'POST',
+    service: 'bedrock',
+    region: config.region,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: body,
+  };
+
+  // Sign the request with AWS SigV4
+  aws4.sign(requestOptions, {
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+  });
+
+  // Use AbortController for timeout (higher-level timeout in expert.ts is 40s, use 45s here as safety margin)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+  let httpResponse: Response;
+  try {
+    // Make the HTTP request using native fetch (Node 18+)
+    const url = `https://${requestOptions.hostname}${requestOptions.path}`;
+    httpResponse = await fetch(url, {
+      method: requestOptions.method,
+      headers: requestOptions.headers,
+      body: requestOptions.body,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+  } catch (fetchError: unknown) {
+    clearTimeout(timeoutId);
+    // Handle AbortError from timeout
+    if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+      throw new Error('Request timeout');
+    }
+    throw fetchError;
+  }
+
+  if (!httpResponse.ok) {
+    const errorText = await httpResponse.text();
+    let errorMessage = `HTTP ${httpResponse.status}: ${errorText}`;
+    
+    // Try to parse Bedrock error structure
+    try {
+      const errorData = JSON.parse(errorText) as {
+        message?: string;
+        __type?: string;
+      };
+      if (errorData.message) {
+        errorMessage = errorData.message;
+        // Create error object matching SDK error structure for compatibility
+        const errorObj = new Error(errorMessage) as Error & {
+          status?: number;
+          error?: {
+            type?: string;
+            code?: string;
+          };
+        };
+        errorObj.status = httpResponse.status;
+        errorObj.error = {
+          type: errorData.__type,
+        };
+        throw errorObj;
+      }
+    } catch (parseError: unknown) {
+      // If it's already our structured error, re-throw it
+      const structuredError = parseError as Error & { status?: number };
+      if (structuredError.status) {
+        throw parseError;
+      }
+      // Otherwise create a basic error
+      throw new Error(errorMessage);
+    }
+  }
+
+  const responseData = await httpResponse.json() as {
+    output?: {
+      message?: {
+        content?: Array<{
+          text?: string;
+          toolUse?: {
+            id?: string;
+            name?: string;
+            input?: unknown;
+          };
+        }>;
+      };
+    };
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
+  };
+
+  logger.debug(`   🔧 Bedrock: Parsing Tool Use response`);
+
+  // Extract structured JSON from Tool Use response
+  // With toolChoice set, Claude should always return a toolUse block
+  let toolUseInput: unknown = null;
+  
+  if (responseData.output?.message?.content) {
+    const contentBlocks = responseData.output.message.content;
+    logger.debug(`   🔧 Bedrock: Found ${contentBlocks.length} content block(s)`);
+    
+    for (let i = 0; i < contentBlocks.length; i++) {
+      const block = contentBlocks[i];
+      
+      if (block.toolUse) {
+        logger.debug(`   🔧 Bedrock: Found toolUse block ${i + 1}: name="${block.toolUse.name}", id="${block.toolUse.id}"`);
+        
+        if (block.toolUse.name !== 'return_analysis_result') {
+          throw new Error(`Unexpected tool name: ${block.toolUse.name}. Expected: return_analysis_result`);
+        }
+        
+        if (!block.toolUse.input) {
+          throw new Error(`Tool Use block missing input field. Tool ID: ${block.toolUse.id}`);
+        }
+        
+        toolUseInput = block.toolUse.input;
+        break; // Use first matching toolUse block
+      } else if (block.text) {
+        logger.debug(`   🔧 Bedrock: Found text block ${i + 1} (unexpected when toolChoice is set)`);
+      }
+    }
+  }
+
+  // Hard error if no toolUse block found (shouldn't happen with toolChoice)
+  if (!toolUseInput) {
+    logger.error(`   ❌ Bedrock: No toolUse block found in response`);
+    logger.error(`   ❌ Bedrock: Response structure: ${JSON.stringify(responseData, null, 2)}`);
+    throw new Error('Bedrock Tool Use failed: No toolUse block found in response. Claude did not use the required tool.');
+  }
+
+  logger.debug(`   🔧 Bedrock: Successfully extracted tool input`);
+
+  // Convert tool input (already a JSON object) to string for consistency with OpenAI path
+  const content = JSON.stringify(toolUseInput);
+
+  // Map Bedrock token structure to OpenAI format
+  let tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
+  if (responseData.usage) {
+    tokens = {
+      prompt_tokens: responseData.usage.inputTokens || 0,
+      completion_tokens: responseData.usage.outputTokens || 0,
+      total_tokens: responseData.usage.totalTokens || 0
+    };
+  }
+
+  return {
+    model: config.model,
+    content,
+    tokens
+  };
+}
+
+async function callOpenAIAPI(
+  config: { apiKey: string; model: string; serviceTier: string },
+  prompt: string
+): Promise<{ model: string; content: string; tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null }> {
+  // Build request body for OpenAI API (direct HTTP call - zero dependencies)
+  const requestBody: {
+    model: string;
+    messages: Array<{ role: 'system' | 'user'; content: string }>;
+    response_format: { type: 'json_object' };
+    temperature: number;
+    service_tier?: 'auto' | 'default' | 'flex';
+  } = {
+    model: config.model,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a code quality checker. Analyze code changes against the threadline guidelines. Be precise - only flag actual violations. Return only valid JSON, no other text.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1
+  };
+
+  // Add service_tier if not 'standard'
+  const normalizedServiceTier = config.serviceTier.toLowerCase();
+  if (normalizedServiceTier !== 'standard' && (normalizedServiceTier === 'auto' || normalizedServiceTier === 'default' || normalizedServiceTier === 'flex')) {
+    requestBody.service_tier = normalizedServiceTier as 'auto' | 'default' | 'flex';
+  }
+
+  // Direct HTTP call to OpenAI API (native fetch - zero dependencies)
+  // Use AbortController for timeout (higher-level timeout in expert.ts is 40s, use 45s here as safety margin)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  
+  let httpResponse: Response;
+  try {
+    httpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+  } catch (fetchError: unknown) {
+    clearTimeout(timeoutId);
+    // Handle AbortError from timeout
+    if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+      throw new Error('Request timeout');
+    }
+    throw fetchError;
+  }
+
+  if (!httpResponse.ok) {
+    const errorText = await httpResponse.text();
+    let errorMessage = `HTTP ${httpResponse.status}: ${errorText}`;
+    
+    // Try to parse OpenAI error structure
+    try {
+      const errorData = JSON.parse(errorText) as {
+        error?: {
+          message?: string;
+          type?: string;
+          code?: string;
+          param?: string;
+        };
+      };
+      if (errorData.error) {
+        errorMessage = errorData.error.message || errorText;
+        // Create error object matching SDK error structure for compatibility
+        const errorObj = new Error(errorMessage) as Error & {
+          status?: number;
+          error?: {
+            type?: string;
+            code?: string;
+            param?: string;
+          };
+        };
+        errorObj.status = httpResponse.status;
+        errorObj.error = {
+          type: errorData.error.type,
+          code: errorData.error.code,
+          param: errorData.error.param,
+        };
+        throw errorObj;
+      }
+    } catch (parseError: unknown) {
+      // If it's already our structured error, re-throw it
+      const structuredError = parseError as Error & { status?: number };
+      if (structuredError.status) {
+        throw parseError;
+      }
+      // Otherwise create a basic error
+      throw new Error(errorMessage);
+    }
+  }
+
+  const response = await httpResponse.json() as {
+    id?: string;
+    model?: string;
+    choices?: Array<{
+      message?: {
+        role?: string;
+        content?: string;
+      };
+      finish_reason?: string;
+    }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+
+  // Capture the actual model returned by OpenAI (may differ from requested)
+  const actualModel = response.model || config.model;
+
+  // Capture token usage if available
+  let tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
+  if (response.usage) {
+    tokens = {
+      prompt_tokens: response.usage.prompt_tokens || 0,
+      completion_tokens: response.usage.completion_tokens || 0,
+      total_tokens: response.usage.total_tokens || 0
+    };
+  }
+
+  const content = response.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('No response from LLM');
+  }
+
+  return {
+    model: actualModel,
+    content,
+    tokens
+  };
 }
 
 function matchesPattern(filePath: string, pattern: string): boolean {

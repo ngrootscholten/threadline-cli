@@ -58,6 +58,8 @@ export async function initCommand() {
   "api_url": "https://devthreadline.com",
   "openai_model": "gpt-5.2",
   "openai_service_tier": "Flex",
+  "bedrock_model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "bedrock_region": "us-east-1",
   "diff_context_lines": 10
 }`;
       fs.writeFileSync(configFile, configContent, 'utf-8');
@@ -84,7 +86,12 @@ export async function initCommand() {
     logger.output(chalk.white('   To use threadlines check, you need:'));
     logger.output('');
     logger.output(chalk.white('   Create a .env.local file in your project root with:'));
+    logger.output(chalk.gray('     // For OpenAI (one of these is required):'));
     logger.output(chalk.gray('     OPENAI_API_KEY=your-openai-api-key'));
+    logger.output(chalk.gray('     // For Bedrock (one of these is required):'));
+    logger.output(chalk.gray('     BEDROCK_ACCESS_KEY_ID=your-access-key-id'));
+    logger.output(chalk.gray('     BEDROCK_SECRET_ACCESS_KEY=your-secret-access-key'));
+    logger.output(chalk.gray('     // For Threadlines sync (required if mode is "online"):'));
     logger.output(chalk.gray('     THREADLINE_API_KEY=your-api-key-here'));
     logger.output(chalk.gray('     THREADLINE_ACCOUNT=your-email@example.com'));
     logger.output('');

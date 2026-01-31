@@ -13,9 +13,18 @@ export interface ProcessThreadlinesRequest {
   }>;
   diff: string;
   files: string[];
-  apiKey: string;
-  model: string;
-  serviceTier: string;
+  provider: 'bedrock' | 'openai';
+  bedrockConfig?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    model: string;
+    region: string;
+  };
+  openaiConfig?: {
+    apiKey: string;
+    model: string;
+    serviceTier: string;
+  };
   contextLinesForLLM: number;
 }
 
@@ -33,10 +42,17 @@ export interface ProcessThreadlinesResponse {
 const EXPERT_TIMEOUT = 40000; // 40 seconds
 
 export async function processThreadlines(request: ProcessThreadlinesRequest): Promise<ProcessThreadlinesResponse> {
-  const { threadlines, diff, files, apiKey, model, serviceTier, contextLinesForLLM } = request;
+  const { threadlines, diff, files, provider, bedrockConfig, openaiConfig, contextLinesForLLM } = request;
   
   // Determine LLM model (same for all threadlines in this check)
-  const llmModel = `${model} ${serviceTier}`;
+  let llmModel: string;
+  if (provider === 'bedrock' && bedrockConfig) {
+    llmModel = bedrockConfig.model;
+  } else if (provider === 'openai' && openaiConfig) {
+    llmModel = `${openaiConfig.model} ${openaiConfig.serviceTier}`;
+  } else {
+    throw new Error('Invalid provider configuration');
+  }
   
   // Create promises with timeout
   const promises = threadlines.map(threadline => {
@@ -67,7 +83,7 @@ export async function processThreadlines(request: ProcessThreadlinesRequest): Pr
       }, EXPERT_TIMEOUT);
     });
     
-    const actualPromise = processThreadline(threadline, diff, files, apiKey, model, serviceTier, contextLinesForLLM).then(result => {
+    const actualPromise = processThreadline(threadline, diff, files, provider, bedrockConfig, openaiConfig, contextLinesForLLM).then(result => {
       // Mark as resolved and clear timeout if it hasn't fired yet
       resolved = true;
       if (timeoutId) {
@@ -130,10 +146,14 @@ export async function processThreadlines(request: ProcessThreadlinesRequest): Pr
     }
   }
 
-  // Use actual model from OpenAI response, append service tier
+  // Use actual model from response
   let modelToStore: string | undefined;
   if (actualModelFromResponse) {
-    modelToStore = `${actualModelFromResponse} ${serviceTier}`;
+    if (provider === 'openai' && openaiConfig) {
+      modelToStore = `${actualModelFromResponse} ${openaiConfig.serviceTier}`;
+    } else {
+      modelToStore = actualModelFromResponse;
+    }
   } else {
     // All calls failed - log prominently and preserve requested model for debugging
     logger.error(`No successful LLM responses received. Requested model: ${llmModel}`);

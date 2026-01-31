@@ -1,7 +1,7 @@
 import { findThreadlines } from '../validators/experts';
 import { getFileContent, getFolderContent, getMultipleFilesContent } from '../git/file';
 import { ExpertResult, ReviewResponse, ReviewAPIClient } from '../api/client';
-import { getOpenAIConfig, logOpenAIConfig, getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
+import { getOpenAIConfig, logOpenAIConfig, getBedrockConfig, logBedrockConfig, getThreadlineApiKey, getThreadlineAccount } from '../utils/config';
 import { detectEnvironment, isCIEnvironment, Environment } from '../utils/environment';
 import { ReviewContextType } from '../api/client';
 import { getCIContext } from '../git/ci-context';
@@ -73,31 +73,65 @@ export async function checkCommand(options: {
     process.exit(1);
   }
 
-  // Pre-flight check: Validate OpenAI API key is set (required for local processing)
+  // Determine which LLM provider to use based on configuration
+  // Explicit provider selection (not a fallback pattern)
+  const bedrockConfig = getBedrockConfig(config);
   const openAIConfig = getOpenAIConfig(config);
   
-  if (!openAIConfig) {
-    logger.error('Missing required environment variable: OPENAI_API_KEY');
+  let provider: 'bedrock' | 'openai';
+  let bedrockConfigToUse: typeof bedrockConfig;
+  let openAIConfigToUse: typeof openAIConfig;
+  
+  // Explicit provider selection: handle all cases clearly
+  if (bedrockConfig && openAIConfig) {
+    // Both configured: use Bedrock (explicit priority)
+    logger.warn('Both Bedrock and OpenAI are configured. Using Bedrock (priority provider).');
+    provider = 'bedrock';
+    bedrockConfigToUse = bedrockConfig;
+    openAIConfigToUse = undefined;
+    logBedrockConfig(bedrockConfig);
+  } else if (bedrockConfig) {
+    // Only Bedrock configured: use Bedrock
+    provider = 'bedrock';
+    bedrockConfigToUse = bedrockConfig;
+    openAIConfigToUse = undefined;
+    logBedrockConfig(bedrockConfig);
+  } else if (openAIConfig) {
+    // Only OpenAI configured: use OpenAI
+    provider = 'openai';
+    bedrockConfigToUse = undefined;
+    openAIConfigToUse = openAIConfig;
+    logOpenAIConfig(openAIConfig);
+  } else {
+    // Neither configured: fail loudly
+    logger.error('Missing required LLM provider configuration');
     logger.output('');
-    logger.output(chalk.yellow('To fix this:'));
+    logger.output(chalk.yellow('You need to configure either Bedrock or OpenAI:'));
     logger.output('');
-    logger.output(chalk.white('  Local development:'));
-    logger.output(chalk.gray('    1. Create a .env.local file in your project root'));
-    logger.output(chalk.gray('    2. Add: OPENAI_API_KEY=your-openai-api-key'));
-    logger.output(chalk.gray('    3. Make sure .env.local is in your .gitignore'));
+    logger.output(chalk.white('  Option 1: Amazon Bedrock'));
+    logger.output(chalk.gray('    Local development:'));
+    logger.output(chalk.gray('      1. Create a .env.local file in your project root'));
+    logger.output(chalk.gray('      2. Add: BEDROCK_ACCESS_KEY_ID=your-access-key-id'));
+    logger.output(chalk.gray('      3. Add: BEDROCK_SECRET_ACCESS_KEY=your-secret-access-key'));
+    logger.output(chalk.gray('      4. Ensure .threadlinerc contains: bedrock_model and bedrock_region'));
+    logger.output(chalk.gray('    CI/CD: Add BEDROCK_ACCESS_KEY_ID and BEDROCK_SECRET_ACCESS_KEY as secrets'));
+    logger.output(chalk.gray('           Ensure .threadlinerc contains: bedrock_model and bedrock_region'));
     logger.output('');
-    logger.output(chalk.white('  CI/CD:'));
-    logger.output(chalk.gray('    GitHub Actions:     Settings → Secrets → Add OPENAI_API_KEY'));
-    logger.output(chalk.gray('    GitLab CI:          Settings → CI/CD → Variables → Add OPENAI_API_KEY'));
-    logger.output(chalk.gray('    Bitbucket Pipelines: Repository settings → Repository variables → Add OPENAI_API_KEY'));
-    logger.output(chalk.gray('    Vercel:             Settings → Environment Variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.white('  Option 2: OpenAI'));
+    logger.output(chalk.gray('    Local development:'));
+    logger.output(chalk.gray('      1. Create a .env.local file in your project root'));
+    logger.output(chalk.gray('      2. Add: OPENAI_API_KEY=your-openai-api-key'));
+    logger.output(chalk.gray('      3. Ensure .threadlinerc contains: openai_model and openai_service_tier'));
+    logger.output(chalk.gray('    CI/CD:'));
+    logger.output(chalk.gray('      GitHub Actions:     Settings → Secrets → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('      GitLab CI:          Settings → CI/CD → Variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('      Bitbucket Pipelines: Repository settings → Repository variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('      Vercel:             Settings → Environment Variables → Add OPENAI_API_KEY'));
+    logger.output(chalk.gray('      Ensure .threadlinerc contains: openai_model and openai_service_tier'));
     logger.output('');
     logger.output(chalk.gray('Get your OpenAI API key at: https://platform.openai.com/api-keys'));
     process.exit(1);
   }
-  
-  // Log OpenAI configuration
-  logOpenAIConfig(openAIConfig);
 
   // 1. Find and validate threadlines
   logger.info('Finding threadlines...');
@@ -259,7 +293,7 @@ export async function checkCommand(options: {
     };
   });
 
-  // 5. Process threadlines locally using OpenAI
+  // 5. Process threadlines locally using configured LLM provider
   logger.info('Running threadline checks...');
   const processResponse = await processThreadlines({
     threadlines: threadlinesWithContext.map(t => ({
@@ -272,9 +306,18 @@ export async function checkCommand(options: {
     })),
     diff: gitDiff.diff,
     files: gitDiff.changedFiles,
-    apiKey: openAIConfig.apiKey,
-    model: openAIConfig.model,
-    serviceTier: openAIConfig.serviceTier,
+    provider,
+    bedrockConfig: bedrockConfigToUse ? {
+      accessKeyId: bedrockConfigToUse.accessKeyId,
+      secretAccessKey: bedrockConfigToUse.secretAccessKey,
+      model: bedrockConfigToUse.model,
+      region: bedrockConfigToUse.region
+    } : undefined,
+    openaiConfig: openAIConfigToUse ? {
+      apiKey: openAIConfigToUse.apiKey,
+      model: openAIConfigToUse.model,
+      serviceTier: openAIConfigToUse.serviceTier
+    } : undefined,
     contextLinesForLLM: config.diff_context_lines
   });
   

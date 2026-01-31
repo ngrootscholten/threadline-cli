@@ -12,6 +12,8 @@ export interface ThreadlineConfig {
   api_url: string;
   openai_model: string;
   openai_service_tier: string;
+  bedrock_model?: string;
+  bedrock_region?: string;
   diff_context_lines: number;
 }
 
