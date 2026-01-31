@@ -149,11 +149,25 @@ export async function processThreadline(
       
       // Try to parse OpenAI error structure
       try {
-        const errorData = JSON.parse(errorText);
+        const errorData = JSON.parse(errorText) as {
+          error?: {
+            message?: string;
+            type?: string;
+            code?: string;
+            param?: string;
+          };
+        };
         if (errorData.error) {
           errorMessage = errorData.error.message || errorText;
           // Create error object matching SDK error structure for compatibility
-          const errorObj: any = new Error(errorMessage);
+          const errorObj = new Error(errorMessage) as Error & {
+            status?: number;
+            error?: {
+              type?: string;
+              code?: string;
+              param?: string;
+            };
+          };
           errorObj.status = httpResponse.status;
           errorObj.error = {
             type: errorData.error.type,
@@ -162,9 +176,10 @@ export async function processThreadline(
           };
           throw errorObj;
         }
-      } catch (parseError: any) {
+      } catch (parseError: unknown) {
         // If it's already our structured error, re-throw it
-        if (parseError.status) {
+        const structuredError = parseError as Error & { status?: number };
+        if (structuredError.status) {
           throw parseError;
         }
         // Otherwise create a basic error
