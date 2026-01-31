@@ -24,6 +24,8 @@ Fallbacks should only be used when it's very important that a larger piece of fu
 
 3. **Don't use fallbacks to hide errors** - If something fails, it's usually better to fail loudly than to silently try something else.
 
+4. **Well-justified fallbacks are compliant** - If a fallback is well-justified, explained (with comments), and signalled (with appropriate logging), it is compliant with this threadline.
+
 ## Examples
 
 ```typescript

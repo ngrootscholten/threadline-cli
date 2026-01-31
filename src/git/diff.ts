@@ -1,4 +1,3 @@
-import simpleGit, { SimpleGit } from 'simple-git';
 import { execSync } from 'child_process';
 import { logger as globalLogger } from '../utils/logger';
 
@@ -91,18 +90,36 @@ export async function getHeadCommitSha(repoRoot: string): Promise<string> {
 
 /**
  * Get commit message for a specific commit SHA
- * Returns full commit message (subject + body) or null if commit not found
+ * 
+ * Fails loudly if commit cannot be retrieved (commit not found, git error, etc.).
+ * This function is only called when a commit is expected to exist:
+ * - In CI environments (always has HEAD commit)
+ * - In local environment with --commit flag (user explicitly provided SHA)
+ * 
+ * @param repoRoot - Path to the repository root
+ * @param sha - Commit SHA to get message for
+ * @returns Full commit message (subject + body)
+ * @throws Error if commit cannot be retrieved
  */
-export async function getCommitMessage(repoRoot: string, sha: string): Promise<string | null> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
+export async function getCommitMessage(repoRoot: string, sha: string): Promise<string> {
   try {
     // Get full commit message (subject + body)
-    const message = await git.show([sha, '--format=%B', '--no-patch']);
-    return message.trim() || null;
-  } catch {
-    // Commit not found or invalid
-    return null;
+    const message = execSync(`git show --format=%B --no-patch ${sha}`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    
+    if (!message) {
+      throw new Error(`Commit ${sha} exists but has no message`);
+    }
+    
+    return message;
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(
+      `Failed to get commit message for ${sha}: ${errorMessage}\n` +
+      `This commit should exist (called from CI or with --commit flag).`
+    );
   }
 }
 
@@ -200,17 +217,19 @@ export async function getPRDiff(
   targetBranch: string,
   logger?: { debug: (msg: string) => void }
 ): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   // Fetch target branch on-demand (works with shallow clones)
   logger?.debug(`Fetching target branch: origin/${targetBranch}`);
   try {
-    await git.fetch(['origin', `${targetBranch}:refs/remotes/origin/${targetBranch}`, '--depth=1']);
+    execSync(`git fetch origin ${targetBranch}:refs/remotes/origin/${targetBranch} --depth=1`, {
+      cwd: repoRoot,
+      stdio: 'pipe' // Suppress fetch output
+    });
   } catch (fetchError) {
+    const errorMessage = fetchError instanceof Error ? fetchError.message : String(fetchError);
     throw new Error(
       `Failed to fetch target branch origin/${targetBranch}. ` +
       `This is required for PR/MR diff comparison. ` +
-      `Error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`
+      `Error: ${errorMessage}`
     );
   }
 
@@ -224,9 +243,17 @@ export async function getPRDiff(
     // This isolates developer changes by comparing against merge base
     // Works when we have enough history (full clones or GitHub's merge commits)
     logger?.debug(`Attempting three-dots diff (merge base): origin/${targetBranch}...HEAD`);
-    diff = await git.diff([`origin/${targetBranch}...HEAD`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${targetBranch}...HEAD`]);
-    changedFiles = diffSummary.files.map(f => f.file);
+    diff = execSync(`git diff origin/${targetBranch}...HEAD -U200`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    });
+    
+    // Get changed files using git diff --name-only
+    const changedFilesOutput = execSync(`git diff --name-only origin/${targetBranch}...HEAD`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    changedFiles = changedFilesOutput ? changedFilesOutput.split('\n') : [];
   } catch (error) {
     // Step 2: Fallback to "Risky" Diff (Two Dots)
     // If three dots fails, it means we're in a shallow clone without enough history
@@ -241,9 +268,16 @@ export async function getPRDiff(
     
     // Use two dots (direct comparison) - shows all differences between tips
     logger?.debug(`Using two-dots diff (direct comparison): origin/${targetBranch}..HEAD`);
-    diff = await git.diff([`origin/${targetBranch}..HEAD`, '-U200']);
-    const diffSummary = await git.diffSummary([`origin/${targetBranch}..HEAD`]);
-    changedFiles = diffSummary.files.map(f => f.file);
+    diff = execSync(`git diff origin/${targetBranch}..HEAD -U200`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    });
+    
+    const changedFilesOutput = execSync(`git diff --name-only origin/${targetBranch}..HEAD`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    changedFiles = changedFilesOutput ? changedFilesOutput.split('\n') : [];
   }
 
   return {
@@ -278,8 +312,6 @@ export async function getPRDiff(
  * @param sha - Commit SHA to get diff for (defaults to HEAD)
  */
 export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Promise<GitDiffResult> {
-  const git: SimpleGit = simpleGit(repoRoot);
-
   // Fetch parent commit on-demand to ensure git show can generate a proper diff
   // This works regardless of CI checkout depth settings (depth=1 or depth=2)
   // If parent is already available, fetch is fast/no-op; if not, we fetch it
@@ -332,7 +364,10 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
   // If we get here, parentSha is guaranteed to be a valid 40-character SHA
   try {
     // Fetch just this one commit (depth=1 is fine, we only need the parent)
-    await git.fetch(['origin', parentSha, '--depth=1']);
+    execSync(`git fetch origin ${parentSha} --depth=1`, {
+      cwd: repoRoot,
+      stdio: 'pipe' // Suppress fetch output
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -351,11 +386,17 @@ export async function getCommitDiff(repoRoot: string, sha: string = 'HEAD'): Pro
   
   try {
     // Use git diff to compare parent against HEAD (plumbing command, ignores shallow boundaries)
-    diff = await git.diff([`${parentSha}..${sha}`, '-U200']);
+    diff = execSync(`git diff ${parentSha}..${sha} -U200`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    });
     
     // Get changed files using git diff --name-only
-    const diffSummary = await git.diffSummary([`${parentSha}..${sha}`]);
-    changedFiles = diffSummary.files.map(f => f.file);
+    const changedFilesOutput = execSync(`git diff --name-only ${parentSha}..${sha}`, {
+      encoding: 'utf-8',
+      cwd: repoRoot
+    }).trim();
+    changedFiles = changedFilesOutput ? changedFilesOutput.split('\n') : [];
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to get diff for commit ${sha}: ${errorMessage}`);

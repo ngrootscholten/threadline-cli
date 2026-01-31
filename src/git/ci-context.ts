@@ -9,7 +9,7 @@
  * This replaces the individual github.ts, gitlab.ts, bitbucket.ts, vercel.ts files.
  */
 
-import simpleGit from 'simple-git';
+import { execSync } from 'child_process';
 import { GitDiffResult } from '../types/git';
 import { ReviewContextType } from '../api/client';
 import { logger } from '../utils/logger';
@@ -48,12 +48,12 @@ export async function getCIContext(
   repoRoot: string,
   environment: CIEnvironment
 ): Promise<CIContext> {
-  const git = simpleGit(repoRoot);
   const config = CI_CONFIGS[environment];
 
   // Check if we're in a git repo
-  const isRepo = await git.checkIsRepo();
-  if (!isRepo) {
+  try {
+    execSync('git rev-parse --git-dir', { cwd: repoRoot, stdio: 'ignore' });
+  } catch {
     throw new Error('Not a git repository. Threadline requires a git repository.');
   }
 
@@ -61,7 +61,7 @@ export async function getCIContext(
   const repoName = await getRepoUrl(repoRoot);
   const commitSha = await getHeadCommitSha(repoRoot);
   const commitAuthor = await getCommitAuthor(repoRoot);
-  const commitMessage = await getCommitMessage(repoRoot, commitSha) || undefined;
+  const commitMessage = await getCommitMessage(repoRoot, commitSha);
 
   // === CI-SPECIFIC ENV VARS (only for things git can't provide) ===
   const branchName = config.getBranchName();

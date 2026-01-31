@@ -12,7 +12,7 @@ import { processThreadlines } from '../processors/expert';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import simpleGit from 'simple-git';
+import { execSync } from 'child_process';
 
 
 /**
@@ -54,21 +54,22 @@ export async function checkCommand(options: {
   // Load configuration
   const config = await loadConfig(cwd);
   
-  logger.info(`🔍 Threadline CLI v${CLI_VERSION}: Checking code against your threadlines...\n`);
+  logger.info(`🔍 Threadline CLI v${CLI_VERSION}: Checking code against your threadlines...`);
   
   // Get git root for consistent file paths across monorepo
-  const git = simpleGit(cwd);
   let gitRoot: string;
   try {
-    const isRepo = await git.checkIsRepo();
-    if (!isRepo) {
-      logger.error('Not a git repository. Threadline requires a git repository.');
-      process.exit(1);
-    }
-    gitRoot = (await git.revparse(['--show-toplevel'])).trim();
+    // Check if we're in a git repo
+    execSync('git rev-parse --git-dir', { cwd: cwd, stdio: 'ignore' });
+    // Get git root
+    gitRoot = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      cwd: cwd
+    }).trim();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to get git root: ${message}`);
+    logger.error('Not a git repository. Threadline requires a git repository.');
     process.exit(1);
   }
 
@@ -227,13 +228,6 @@ export async function checkCommand(options: {
     process.exit(0);
   }
   
-  logger.info(`✓ Found ${gitDiff.changedFiles.length} changed file(s) (context: ${reviewContext})\n`);
-  
-  // Log the files being sent
-  for (const file of gitDiff.changedFiles) {
-    logger.info(`  → ${file}`);
-  }
-
   // 4. Read context files for each threadline
   const threadlinesWithContext = threadlines.map(threadline => {
     const contextContent: Record<string, string> = {};

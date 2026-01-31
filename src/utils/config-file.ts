@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import simpleGit from 'simple-git';
+import { execSync } from 'child_process';
 
 export interface ThreadlineConfig {
   /**
@@ -25,19 +25,25 @@ export const DEFAULT_CONFIG: ThreadlineConfig = {
 
 /**
  * Finds the git root directory by walking up from startDir.
- * Returns startDir if not in a git repository.
+ * Fails loudly if not in a git repository (this tool requires a git repo).
  */
 async function findGitRoot(startDir: string): Promise<string> {
   try {
-    const git = simpleGit(startDir);
-    const isRepo = await git.checkIsRepo();
-    if (isRepo) {
-      return (await git.revparse(['--show-toplevel'])).trim();
-    }
-  } catch {
-    // Not a git repo or error - return startDir
+    // Check if we're in a git repo
+    execSync('git rev-parse --git-dir', { cwd: startDir, stdio: 'ignore' });
+    // Get git root
+    return execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      cwd: startDir
+    }).trim();
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(
+      `Not a git repository. Threadline requires a git repository.\n` +
+      `Current directory: ${startDir}\n` +
+      `Error: ${errorMessage}`
+    );
   }
-  return startDir;
 }
 
 /**
