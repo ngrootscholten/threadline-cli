@@ -154,12 +154,16 @@ export async function processThreadlines(request: ProcessThreadlinesRequest): Pr
     } else {
       modelToStore = actualModelFromResponse;
     }
-  } else {
-    // All calls failed - log prominently and preserve requested model for debugging
+  } else if (errors > 0) {
+    // LLM calls were attempted but all failed - log prominently
     logger.error(`No successful LLM responses received. Requested model: ${llmModel}`);
     logger.error(`Completed: ${completed}, Timed out: ${timedOut}, Errors: ${errors}`);
     // Store requested model so we can debug what was attempted
     modelToStore = `${llmModel} (no successful responses)`;
+  } else {
+    // No model captured but no errors - means all were early returns (not_relevant due to no matching files)
+    // This is fine, use requested model
+    modelToStore = llmModel;
   }
 
   // Return all results - CLI will handle filtering/display
