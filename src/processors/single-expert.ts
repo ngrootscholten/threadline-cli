@@ -1,4 +1,3 @@
-import OpenAI from 'openai';
 import { ExpertResult } from '../api/client';
 import { buildPrompt, ThreadlineInput } from '../llm/prompt-builder';
 import { filterDiffByFiles, extractFilesFromDiff } from '../utils/diff-filter';
@@ -33,7 +32,6 @@ export async function processThreadline(
   serviceTier: string,
   contextLinesForLLM: number
 ): Promise<ProcessThreadlineResult> {
-  const openai = new OpenAI({ apiKey });
 
   // Filter files that match threadline patterns
   const relevantFiles = files.filter(file => 
@@ -90,7 +88,8 @@ export async function processThreadline(
   let llmCallErrorMessage: string | null = null;
 
   try {
-    const requestParams: {
+    // Build request body for OpenAI API (direct HTTP call - zero dependencies)
+    const requestBody: {
       model: string;
       messages: Array<{ role: 'system' | 'user'; content: string }>;
       response_format: { type: 'json_object' };
@@ -115,10 +114,80 @@ export async function processThreadline(
     // Add service_tier if not 'standard'
     const normalizedServiceTier = serviceTier.toLowerCase();
     if (normalizedServiceTier !== 'standard' && (normalizedServiceTier === 'auto' || normalizedServiceTier === 'default' || normalizedServiceTier === 'flex')) {
-      requestParams.service_tier = normalizedServiceTier as 'auto' | 'default' | 'flex';
+      requestBody.service_tier = normalizedServiceTier as 'auto' | 'default' | 'flex';
     }
 
-    const response = await openai.chat.completions.create(requestParams);
+    // Direct HTTP call to OpenAI API (native fetch - zero dependencies)
+    // Use AbortController for timeout (higher-level timeout in expert.ts is 40s, use 45s here as safety margin)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    
+    let httpResponse: Response;
+    try {
+      httpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (fetchError: unknown) {
+      clearTimeout(timeoutId);
+      // Handle AbortError from timeout
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
+      throw fetchError;
+    }
+
+    if (!httpResponse.ok) {
+      const errorText = await httpResponse.text();
+      let errorMessage = `HTTP ${httpResponse.status}: ${errorText}`;
+      
+      // Try to parse OpenAI error structure
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.error) {
+          errorMessage = errorData.error.message || errorText;
+          // Create error object matching SDK error structure for compatibility
+          const errorObj: any = new Error(errorMessage);
+          errorObj.status = httpResponse.status;
+          errorObj.error = {
+            type: errorData.error.type,
+            code: errorData.error.code,
+            param: errorData.error.param,
+          };
+          throw errorObj;
+        }
+      } catch (parseError: any) {
+        // If it's already our structured error, re-throw it
+        if (parseError.status) {
+          throw parseError;
+        }
+        // Otherwise create a basic error
+        throw new Error(errorMessage);
+      }
+    }
+
+    const response = await httpResponse.json() as {
+      id?: string;
+      model?: string;
+      choices?: Array<{
+        message?: {
+          role?: string;
+          content?: string;
+        };
+        finish_reason?: string;
+      }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
+    };
 
     // Capture the actual model returned by OpenAI (may differ from requested)
     const actualModel = response.model;
@@ -129,13 +198,13 @@ export async function processThreadline(
     // Capture token usage if available
     if (response.usage) {
       llmCallTokens = {
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: response.usage.completion_tokens,
-        total_tokens: response.usage.total_tokens
+        prompt_tokens: response.usage.prompt_tokens || 0,
+        completion_tokens: response.usage.completion_tokens || 0,
+        total_tokens: response.usage.total_tokens || 0
       };
     }
 
-    const content = response.choices[0]?.message?.content;
+    const content = response.choices?.[0]?.message?.content;
     if (!content) {
       throw new Error('No response from LLM');
     }
@@ -199,9 +268,10 @@ export async function processThreadline(
     logger.error(`   ❌ OpenAI error: ${JSON.stringify(error, null, 2)}`);
     
     // Extract OpenAI error details from the error object
+    // Handle both SDK-style errors and HTTP errors
     const errorObj = error as {
-      error?: { type?: string; code?: string };
-      status?: unknown;
+      error?: { type?: string; code?: string; param?: string; message?: string };
+      status?: number;
       headers?: unknown;
       request_id?: unknown;
       code?: string;
@@ -214,7 +284,12 @@ export async function processThreadline(
       status: errorObj?.status,
       headers: errorObj?.headers,
       request_id: errorObj?.request_id,
-      error: errorObj?.error,
+      error: errorObj?.error || {
+        type: errorObj?.type,
+        code: errorObj?.code,
+        param: errorObj?.param,
+        message: errorObj?.message,
+      },
       code: errorObj?.code,
       param: errorObj?.param,
       type: errorObj?.type
