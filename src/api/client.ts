@@ -1,5 +1,3 @@
-import axios, { AxiosInstance } from 'axios';
-
 export interface ReviewRequest {
   threadlines: Array<{
     id: string;
@@ -93,28 +91,68 @@ export interface SyncResultsResponse {
 }
 
 export class ReviewAPIClient {
-  private client: AxiosInstance;
+  private baseURL: string;
+  private readonly timeout: number = 60000; // 60s timeout for entire request
 
   constructor(baseURL: string) {
-    this.client = axios.create({
-      baseURL,
-      timeout: 60000, // 60s timeout for entire request
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    this.baseURL = baseURL;
   }
 
-
+  private async fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error: unknown) {
+      clearTimeout(timeoutId);
+      // Handle AbortError from timeout
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.timeout}ms`);
+      }
+      throw error;
+    }
+  }
 
   async review(request: ReviewRequest): Promise<ReviewResponse> {
-    const response = await this.client.post<ReviewResponse>('/api/threadline-check', request);
-    return response.data;
+    const url = `${this.baseURL}/api/threadline-check`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    return await response.json() as ReviewResponse;
   }
 
   async syncResults(request: SyncResultsRequest): Promise<SyncResultsResponse> {
-    const response = await this.client.post<SyncResultsResponse>('/api/threadline-check-results', request);
-    return response.data;
+    const url = `${this.baseURL}/api/threadline-check-results`;
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    return await response.json() as SyncResultsResponse;
   }
 }
 
