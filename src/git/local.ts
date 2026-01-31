@@ -81,64 +81,44 @@ export async function getLocalContext(
  * or review unstaged changes if nothing is staged.
  */
 async function getDiff(repoRoot: string): Promise<GitDiffResult> {
-  // Get git status in porcelain format to determine what changes exist
-  // Porcelain format: XY filename
-  // X = staged status, Y = unstaged status
-  // ' ' = no change, 'M' = modified, 'A' = added, 'D' = deleted, etc.
-  // '?' = untracked (only in Y position, X is always '?' too)
+  // Use git diff commands as source of truth (more reliable than git status --porcelain)
+  // git status --porcelain can be inconsistent in some edge cases
+  
+  // Check staged files first (source of truth)
+  const stagedFilesOutput = execSync('git diff --cached --name-only', {
+    encoding: 'utf-8',
+    cwd: repoRoot
+  }).trim();
+  const actualStagedFiles = stagedFilesOutput ? stagedFilesOutput.split('\n') : [];
+  
+  // Check unstaged files (source of truth)
+  const unstagedFilesOutput = execSync('git diff --name-only', {
+    encoding: 'utf-8',
+    cwd: repoRoot
+  }).trim();
+  const actualUnstagedFiles = unstagedFilesOutput ? unstagedFilesOutput.split('\n') : [];
+  
+  // Get untracked files from git status --porcelain (only reliable way to get untracked)
   const statusOutput = execSync('git status --porcelain', {
     encoding: 'utf-8',
     cwd: repoRoot
   }).trim();
-  
   const lines = statusOutput ? statusOutput.split('\n') : [];
-  const staged: string[] = [];
-  const unstaged: string[] = [];
   const untracked: string[] = [];
   
   for (const line of lines) {
     const stagedStatus = line[0];
     const unstagedStatus = line[1];
     
-    // Collect untracked files separately (they need special handling)
+    // Collect untracked files (only reliable way to detect them)
     if (stagedStatus === '?' && unstagedStatus === '?') {
-      // Format: "?? filename" - skip 3 characters
       const file = line.slice(3);
       untracked.push(file);
-      continue;
-    }
-    
-    // For tracked files, the format can be:
-    // - "M filename" (staged, no leading space) - skip 2 characters
-    // - " M filename" (unstaged, leading space) - skip 3 characters
-    // - "MM filename" (both staged and unstaged) - skip 3 characters
-    let file: string;
-    if (stagedStatus !== ' ' && unstagedStatus === ' ') {
-      // Staged only: "M filename" - skip 2 characters (M + space)
-      file = line.slice(2);
-    } else {
-      // Unstaged or both: " M filename" or "MM filename" - skip 3 characters
-      file = line.slice(3);
-    }
-    
-    if (stagedStatus !== ' ') {
-      staged.push(file);
-    }
-    if (unstagedStatus !== ' ' && unstagedStatus !== '?') {
-      unstaged.push(file);
     }
   }
   
   let diff: string;
   let changedFiles: string[];
-
-  // Check if there are actually staged files (use git diff as source of truth)
-  // git status parsing can be inconsistent, so we verify with git diff
-  const stagedFilesOutput = execSync('git diff --cached --name-only', {
-    encoding: 'utf-8',
-    cwd: repoRoot
-  }).trim();
-  const actualStagedFiles = stagedFilesOutput ? stagedFilesOutput.split('\n') : [];
   
   // Workflow A: Developer has staged files - check ONLY staged files
   // (Ignore unstaged and untracked - developer explicitly chose to check staged)
@@ -167,27 +147,22 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
   }
   
   // No staged files - log clearly and continue to unstaged/untracked
-  if (staged.length > 0) {
-    // git status showed staged files but git diff doesn't - they were likely unstaged
-    logger.info(`No staged files detected (files may have been unstaged), checking unstaged/untracked files instead.`);
-  } else {
+  if (actualUnstagedFiles.length > 0 || untracked.length > 0) {
     logger.info(`No staged files, checking unstaged/untracked files.`);
+  } else {
+    logger.info(`No staged files detected.`);
   }
   
   // Workflow B: Developer hasn't staged files - check unstaged + untracked files
   // (Untracked files are conceptually "unstaged" - files being worked on but not committed)
-  if (unstaged.length > 0 || untracked.length > 0) {
+  if (actualUnstagedFiles.length > 0 || untracked.length > 0) {
     // Get unstaged diff if there are unstaged files
-    if (unstaged.length > 0) {
+    if (actualUnstagedFiles.length > 0) {
       diff = execSync('git diff -U200', {
         encoding: 'utf-8',
         cwd: repoRoot
       });
-      const changedFilesOutput = execSync('git diff --name-only', {
-        encoding: 'utf-8',
-        cwd: repoRoot
-      }).trim();
-      changedFiles = changedFilesOutput ? changedFilesOutput.split('\n') : [];
+      changedFiles = actualUnstagedFiles;
     } else {
       diff = '';
       changedFiles = [];
@@ -230,13 +205,24 @@ async function getDiff(repoRoot: string): Promise<GitDiffResult> {
     
     const allChangedFiles = [...changedFiles, ...untrackedFileList];
     
+    // Validate that we actually have changes to review
+    // This can happen if:
+    // 1. git status showed files but git diff returns empty (files were staged/unstaged between commands)
+    // 2. All untracked items are directories (skipped)
+    // 3. Parsing incorrectly categorized files
+    if (allChangedFiles.length === 0 || !combinedDiff || combinedDiff.trim() === '') {
+      throw new Error(
+        'No changes detected. Stage files with "git add" or modify files to run threadlines.'
+      );
+    }
+    
     const unstagedCount = changedFiles.length;
     const untrackedCount = untrackedFileList.length;
     if (unstagedCount > 0 && untrackedCount > 0) {
       logger.info(`Checking UNSTAGED changes (${unstagedCount} file(s)) + ${untrackedCount} untracked file(s)`);
     } else if (unstagedCount > 0) {
       logger.info(`Checking UNSTAGED changes (${unstagedCount} file(s))`);
-    } else {
+    } else if (untrackedCount > 0) {
       logger.info(`Checking UNTRACKED files (${untrackedCount} file(s))`);
     }
     

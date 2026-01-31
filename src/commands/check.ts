@@ -420,6 +420,7 @@ function displayResults(response: ReviewResponse, showFull: boolean) {
       }
     }
 
+    
     if (metadata.timedOut > 0) {
       logger.output(chalk.yellow(`  ${metadata.timedOut} timed out`));
     }
